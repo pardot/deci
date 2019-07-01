@@ -9,14 +9,12 @@ import (
 	"testing"
 
 	jose "gopkg.in/square/go-jose.v2"
-
-	"github.com/dexidp/dex/storage"
 )
 
 func TestParseAuthorizationRequest(t *testing.T) {
 	tests := []struct {
 		name                   string
-		clients                []storage.Client
+		clients                []Client
 		supportedResponseTypes []string
 
 		usePOST bool
@@ -27,7 +25,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 	}{
 		{
 			name: "normal request",
-			clients: []storage.Client{
+			clients: []Client{
 				{
 					ID:           "foo",
 					RedirectURIs: []string{"https://example.com/foo"},
@@ -43,7 +41,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 		},
 		{
 			name: "POST request",
-			clients: []storage.Client{
+			clients: []Client{
 				{
 					ID:           "foo",
 					RedirectURIs: []string{"https://example.com/foo"},
@@ -60,7 +58,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 		},
 		{
 			name: "invalid client id",
-			clients: []storage.Client{
+			clients: []Client{
 				{
 					ID:           "foo",
 					RedirectURIs: []string{"https://example.com/foo"},
@@ -77,7 +75,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 		},
 		{
 			name: "invalid redirect uri",
-			clients: []storage.Client{
+			clients: []Client{
 				{
 					ID:           "bar",
 					RedirectURIs: []string{"https://example.com/bar"},
@@ -94,7 +92,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 		},
 		{
 			name: "implicit flow",
-			clients: []storage.Client{
+			clients: []Client{
 				{
 					ID:           "bar",
 					RedirectURIs: []string{"https://example.com/bar"},
@@ -110,7 +108,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 		},
 		{
 			name: "unsupported response type",
-			clients: []storage.Client{
+			clients: []Client{
 				{
 					ID:           "bar",
 					RedirectURIs: []string{"https://example.com/bar"},
@@ -127,7 +125,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 		},
 		{
 			name: "only token response type",
-			clients: []storage.Client{
+			clients: []Client{
 				{
 					ID:           "bar",
 					RedirectURIs: []string{"https://example.com/bar"},
@@ -151,7 +149,7 @@ func TestParseAuthorizationRequest(t *testing.T) {
 
 			httpServer, server := newTestServer(ctx, t, func(c *Config) {
 				c.SupportedResponseTypes = tc.supportedResponseTypes
-				c.Storage = storage.WithStaticClients(c.Storage, tc.clients)
+				c.Storage = WithStaticClients(c.Storage, tc.clients)
 			})
 			defer httpServer.Close()
 
@@ -198,53 +196,53 @@ func TestAccessTokenHash(t *testing.T) {
 
 func TestValidRedirectURI(t *testing.T) {
 	tests := []struct {
-		client      storage.Client
+		client      Client
 		redirectURI string
 		wantValid   bool
 	}{
 		{
-			client: storage.Client{
+			client: Client{
 				RedirectURIs: []string{"http://foo.com/bar"},
 			},
 			redirectURI: "http://foo.com/bar",
 			wantValid:   true,
 		},
 		{
-			client: storage.Client{
+			client: Client{
 				RedirectURIs: []string{"http://foo.com/bar"},
 			},
 			redirectURI: "http://foo.com/bar/baz",
 		},
 		{
-			client: storage.Client{
+			client: Client{
 				Public: true,
 			},
 			redirectURI: "urn:ietf:wg:oauth:2.0:oob",
 			wantValid:   true,
 		},
 		{
-			client: storage.Client{
+			client: Client{
 				Public: true,
 			},
 			redirectURI: "http://localhost:8080/",
 			wantValid:   true,
 		},
 		{
-			client: storage.Client{
+			client: Client{
 				Public: true,
 			},
 			redirectURI: "http://localhost:991/bar",
 			wantValid:   true,
 		},
 		{
-			client: storage.Client{
+			client: Client{
 				Public: true,
 			},
 			redirectURI: "http://localhost",
 			wantValid:   true,
 		},
 		{
-			client: storage.Client{
+			client: Client{
 				Public: true,
 			},
 			redirectURI: "http://localhost.localhost:8080/",

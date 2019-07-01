@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/dexidp/dex/storage"
 )
 
 func TestHandleHealth(t *testing.T) {
@@ -26,10 +24,10 @@ func TestHandleHealth(t *testing.T) {
 }
 
 type badStorage struct {
-	storage.Storage
+	Storage
 }
 
-func (b *badStorage) CreateAuthRequest(r storage.AuthRequest) error {
+func (b *badStorage) CreateAuthRequest(r AuthRequest) error {
 	return errors.New("storage unavailable")
 }
 

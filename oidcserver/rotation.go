@@ -12,8 +12,7 @@ import (
 
 	"gopkg.in/square/go-jose.v2"
 
-	"github.com/dexidp/dex/pkg/log"
-	"github.com/dexidp/dex/storage"
+	"github.com/sirupsen/logrus"
 )
 
 var errAlreadyRotated = errors.New("keys already rotated by another server instance")
@@ -56,12 +55,12 @@ func defaultRotationStrategy(rotationFrequency, idTokenValidFor time.Duration) r
 }
 
 type keyRotater struct {
-	storage.Storage
+	Storage
 
 	strategy rotationStrategy
 	now      func() time.Time
 
-	logger log.Logger
+	logger logrus.FieldLogger
 }
 
 // startKeyRotation begins key rotation in a new goroutine, closing once the context is canceled.
@@ -97,7 +96,7 @@ func (s *Server) startKeyRotation(ctx context.Context, strategy rotationStrategy
 
 func (k keyRotater) rotate() error {
 	keys, err := k.GetKeys()
-	if err != nil && err != storage.ErrNotFound {
+	if err != nil && err != ErrNotFound {
 		return fmt.Errorf("get keys: %v", err)
 	}
 	if k.now().Before(keys.NextRotation) {
@@ -129,16 +128,16 @@ func (k keyRotater) rotate() error {
 	}
 
 	var nextRotation time.Time
-	err = k.Storage.UpdateKeys(func(keys storage.Keys) (storage.Keys, error) {
+	err = k.Storage.UpdateKeys(func(keys Keys) (Keys, error) {
 		tNow := k.now()
 
 		// if you are running multiple instances of dex, another instance
 		// could have already rotated the keys.
 		if tNow.Before(keys.NextRotation) {
-			return storage.Keys{}, errAlreadyRotated
+			return Keys{}, errAlreadyRotated
 		}
 
-		expired := func(key storage.VerificationKey) bool {
+		expired := func(key VerificationKey) bool {
 			return tNow.After(key.Expiry)
 		}
 
@@ -155,7 +154,7 @@ func (k keyRotater) rotate() error {
 		if keys.SigningKeyPub != nil {
 			// Move current signing key to a verification only key, throwing
 			// away the private part.
-			verificationKey := storage.VerificationKey{
+			verificationKey := VerificationKey{
 				PublicKey: keys.SigningKeyPub,
 				// After demoting the signing key, keep the token around for at least
 				// the amount of time an ID Token is valid for. This ensures the

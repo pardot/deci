@@ -16,7 +16,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -27,11 +26,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 	jose "gopkg.in/square/go-jose.v2"
-
-	"github.com/dexidp/dex/connector"
-	"github.com/dexidp/dex/connector/mock"
-	"github.com/dexidp/dex/storage"
-	"github.com/dexidp/dex/storage/memory"
 )
 
 func mustLoad(s string) *rsa.PrivateKey {
@@ -88,7 +82,7 @@ func newTestServer(ctx context.Context, t *testing.T, updateConfig func(c *Confi
 
 	config := Config{
 		Issuer:  s.URL,
-		Storage: memory.New(logger),
+		Storage: newMemoryStore(logger),
 		Web: WebConfig{
 			Dir: "../web",
 		},
@@ -100,20 +94,11 @@ func newTestServer(ctx context.Context, t *testing.T, updateConfig func(c *Confi
 	}
 	s.URL = config.Issuer
 
-	connector := storage.Connector{
-		ID:              "mock",
-		Type:            "mockCallback",
-		Name:            "Mock",
-		ResourceVersion: "1",
-	}
-	if err := config.Storage.CreateConnector(connector); err != nil {
-		t.Fatalf("create connector: %v", err)
-	}
-
 	var err error
 	if server, err = newServer(ctx, config, staticRotationStrategy(testKey)); err != nil {
 		t.Fatal(err)
 	}
+	server.connectors = map[string]Connector{"mock": NewCallbackConnector(logger)}
 	server.skipApproval = true // Don't prompt for approval, just immediately redirect with code.
 	return s, server
 }
@@ -177,7 +162,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 	idTokensValidFor := time.Second * 30
 
 	// Connector used by the tests.
-	var conn *mock.Callback
+	var conn *Callback
 
 	oidcConfig := &oidc.Config{SkipClientIDCheck: true}
 
@@ -372,7 +357,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 					return errors.New("token shouldn't be valid")
 				}
 
-				ident := connector.Identity{
+				ident := Identity{
 					UserID:        "fooid",
 					Username:      "foo",
 					Email:         "foo@bar.com",
@@ -428,7 +413,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 			defer httpServer.Close()
 
 			mockConn := s.connectors["mock"]
-			conn = mockConn.Connector.(*mock.Callback)
+			conn = mockConn.(*Callback)
 
 			// Query server's provider metadata.
 			p, err := oidc.NewProvider(ctx, httpServer.URL)
@@ -499,7 +484,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 
 			// Regester the client above with dex.
 			redirectURL := oauth2Client.URL + "/callback"
-			client := storage.Client{
+			client :=Client{
 				ID:           clientID,
 				Secret:       clientSecret,
 				RedirectURIs: []string{redirectURL},
@@ -539,23 +524,6 @@ func TestOAuth2CodeFlow(t *testing.T) {
 			}
 		}()
 	}
-}
-
-type nonceSource struct {
-	nonce string
-	once  sync.Once
-}
-
-func (n *nonceSource) ClaimNonce(nonce string) error {
-	if n.nonce != nonce {
-		return errors.New("invalid nonce")
-	}
-	ok := false
-	n.once.Do(func() { ok = true })
-	if !ok {
-		return errors.New("invalid nonce")
-	}
-	return nil
 }
 
 func TestOAuth2ImplicitFlow(t *testing.T) {
@@ -614,7 +582,7 @@ func TestOAuth2ImplicitFlow(t *testing.T) {
 	defer oauth2Server.Close()
 
 	redirectURL := oauth2Server.URL + "/callback"
-	client := storage.Client{
+	client :=Client{
 		ID:           "testclient",
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -623,11 +591,8 @@ func TestOAuth2ImplicitFlow(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	src := &nonceSource{nonce: nonce}
-
 	idTokenVerifier := p.Verifier(&oidc.Config{
 		ClientID:   client.ID,
-		ClaimNonce: src.ClaimNonce,
 	})
 
 	oauth2Config = &oauth2.Config{
@@ -770,7 +735,7 @@ func TestCrossClientScopes(t *testing.T) {
 	defer oauth2Server.Close()
 
 	redirectURL := oauth2Server.URL + "/callback"
-	client := storage.Client{
+	client :=Client{
 		ID:           testClientID,
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -779,7 +744,7 @@ func TestCrossClientScopes(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	peer := storage.Client{
+	peer :=Client{
 		ID:           peerID,
 		Secret:       "foobar",
 		TrustedPeers: []string{"testclient"},
@@ -892,7 +857,7 @@ func TestCrossClientScopesWithAzpInAudienceByDefault(t *testing.T) {
 	defer oauth2Server.Close()
 
 	redirectURL := oauth2Server.URL + "/callback"
-	client := storage.Client{
+	client :=Client{
 		ID:           testClientID,
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -901,7 +866,7 @@ func TestCrossClientScopesWithAzpInAudienceByDefault(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	peer := storage.Client{
+	peer :=Client{
 		ID:           peerID,
 		Secret:       "foobar",
 		TrustedPeers: []string{"testclient"},
@@ -935,7 +900,7 @@ func TestCrossClientScopesWithAzpInAudienceByDefault(t *testing.T) {
 }
 
 func TestPasswordDB(t *testing.T) {
-	s := memory.New(logger)
+	s := newMemoryStore(logger)
 	conn := newPasswordDB(s)
 
 	pw := "hi"
@@ -945,7 +910,7 @@ func TestPasswordDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.CreatePassword(storage.Password{
+	s.CreatePassword(Password{
 		Email:    "jane@example.com",
 		Username: "jane",
 		UserID:   "foobar",
@@ -956,7 +921,7 @@ func TestPasswordDB(t *testing.T) {
 		name         string
 		username     string
 		password     string
-		wantIdentity connector.Identity
+		wantIdentity Identity
 		wantInvalid  bool
 		wantErr      bool
 	}{
@@ -964,7 +929,7 @@ func TestPasswordDB(t *testing.T) {
 			name:     "valid password",
 			username: "jane@example.com",
 			password: pw,
-			wantIdentity: connector.Identity{
+			wantIdentity: Identity{
 				Email:         "jane@example.com",
 				Username:      "jane",
 				UserID:        "foobar",
@@ -986,7 +951,7 @@ func TestPasswordDB(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		ident, valid, err := conn.Login(context.Background(), connector.Scopes{}, tc.username, tc.password)
+		ident, valid, err := conn.Login(context.Background(), Scopes{}, tc.username, tc.password)
 		if err != nil {
 			if !tc.wantErr {
 				t.Errorf("%s: %v", tc.name, err)
@@ -1019,7 +984,7 @@ func TestPasswordDB(t *testing.T) {
 }
 
 func TestPasswordDBUsernamePrompt(t *testing.T) {
-	s := memory.New(logger)
+	s := newMemoryStore(logger)
 	conn := newPasswordDB(s)
 
 	expected := "Email Address"
@@ -1029,11 +994,11 @@ func TestPasswordDBUsernamePrompt(t *testing.T) {
 }
 
 type storageWithKeysTrigger struct {
-	storage.Storage
+	Storage
 	f func()
 }
 
-func (s storageWithKeysTrigger) GetKeys() (storage.Keys, error) {
+func (s storageWithKeysTrigger) GetKeys() (Keys, error) {
 	s.f()
 	return s.Storage.GetKeys()
 }
@@ -1042,7 +1007,7 @@ func TestKeyCacher(t *testing.T) {
 	tNow := time.Now()
 	now := func() time.Time { return tNow }
 
-	s := memory.New(logger)
+	s := newMemoryStore(logger)
 
 	tests := []struct {
 		before            func()
@@ -1054,7 +1019,7 @@ func TestKeyCacher(t *testing.T) {
 		},
 		{
 			before: func() {
-				s.UpdateKeys(func(old storage.Keys) (storage.Keys, error) {
+				s.UpdateKeys(func(old Keys) (Keys, error) {
 					old.NextRotation = tNow.Add(time.Minute)
 					return old, nil
 				})
@@ -1074,7 +1039,7 @@ func TestKeyCacher(t *testing.T) {
 		{
 			before: func() {
 				tNow = tNow.Add(time.Hour)
-				s.UpdateKeys(func(old storage.Keys) (storage.Keys, error) {
+				s.UpdateKeys(func(old Keys) (Keys, error) {
 					old.NextRotation = tNow.Add(time.Minute)
 					return old, nil
 				})
@@ -1166,7 +1131,7 @@ func TestRefreshTokenFlow(t *testing.T) {
 
 	// Register the client above with dex.
 	redirectURL := oauth2Client.server.URL + "/callback"
-	client := storage.Client{
+	client :=Client{
 		ID:           "testclient",
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -1201,5 +1166,52 @@ func TestRefreshTokenFlow(t *testing.T) {
 	newToken, err := oauth2Client.config.TokenSource(ctx, tok).Token()
 	if newToken != nil {
 		t.Errorf("Token refreshed with invalid refresh token.")
+	}
+}
+
+// Ensures checkCost returns expected values
+func TestCheckCost(t *testing.T) {
+	tests := []struct {
+		name      string
+		inputHash []byte
+
+		wantErr bool
+	}{
+		{
+			name: "valid cost",
+			// bcrypt hash of the value "test1" with cost 12 (default)
+			inputHash: []byte("$2a$12$M2Ot95Qty1MuQdubh1acWOiYadJDzeVg3ve4n5b.dgcgPdjCseKx2"),
+		},
+		{
+			name:      "invalid hash",
+			inputHash: []byte(""),
+			wantErr:   true,
+		},
+		{
+			name: "cost below default",
+			// bcrypt hash of the value "test1" with cost 4
+			inputHash: []byte("$2a$04$8bSTbuVCLpKzaqB3BmgI7edDigG5tIQKkjYUu/mEO9gQgIkw9m7eG"),
+			wantErr:   true,
+		},
+		{
+			name: "cost above recommendation",
+			// bcrypt hash of the value "test1" with cost 17
+			inputHash: []byte("$2a$17$tWuZkTxtSmRyWZAGWVHQE.7npdl.TgP8adjzLJD.SyjpFznKBftPe"),
+			wantErr:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		if err := checkCost(tc.inputHash); err != nil {
+			if !tc.wantErr {
+				t.Errorf("%s: %s", tc.name, err)
+			}
+			continue
+		}
+
+		if tc.wantErr {
+			t.Errorf("%s: expected err", tc.name)
+			continue
+		}
 	}
 }

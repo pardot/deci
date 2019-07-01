@@ -2,7 +2,6 @@ package oidcserver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,35 +15,16 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/dexidp/dex/connector"
-	"github.com/dexidp/dex/connector/authproxy"
-	"github.com/dexidp/dex/connector/bitbucketcloud"
-	"github.com/dexidp/dex/connector/github"
-	"github.com/dexidp/dex/connector/gitlab"
-	"github.com/dexidp/dex/connector/keystone"
-	"github.com/dexidp/dex/connector/ldap"
-	"github.com/dexidp/dex/connector/linkedin"
-	"github.com/dexidp/dex/connector/microsoft"
-	"github.com/dexidp/dex/connector/mock"
-	"github.com/dexidp/dex/connector/oidc"
-	"github.com/dexidp/dex/connector/saml"
-	"github.com/dexidp/dex/pkg/log"
-	"github.com/dexidp/dex/storage"
 	"github.com/felixge/httpsnoop"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
 )
 
 // LocalConnector is the local passwordDB connector which is an internal
 // connector maintained by the server.
 const LocalConnector = "local"
-
-// Connector is a connector with resource version metadata.
-type Connector struct {
-	ResourceVersion string
-	Connector       connector.Connector
-}
 
 // Config holds the server's configuration options.
 //
@@ -53,7 +33,7 @@ type Config struct {
 	Issuer string
 
 	// The backing persistence layer.
-	Storage storage.Storage
+	Storage Storage
 
 	// Valid values are "code" to enable the code flow and "token" to enable the implicit
 	// flow. If no response types are supplied this value defaults to "code".
@@ -79,7 +59,7 @@ type Config struct {
 
 	Web WebConfig
 
-	Logger log.Logger
+	Logger logrus.FieldLogger
 
 	PrometheusRegistry *prometheus.Registry
 }
@@ -125,7 +105,7 @@ type Server struct {
 	// Map of connector IDs to connectors.
 	connectors map[string]Connector
 
-	storage storage.Storage
+	storage Storage
 
 	mux http.Handler
 
@@ -141,7 +121,7 @@ type Server struct {
 	idTokensValidFor     time.Duration
 	authRequestsValidFor time.Duration
 
-	logger log.Logger
+	logger logrus.FieldLogger
 }
 
 // NewServer constructs a server from the provided config.
@@ -204,23 +184,6 @@ func newServer(ctx context.Context, c Config, rotationStrategy rotationStrategy)
 		now:                    now,
 		templates:              tmpls,
 		logger:                 c.Logger,
-	}
-
-	// Retrieves connector objects in backend storage. This list includes the static connectors
-	// defined in the ConfigMap and dynamic connectors retrieved from the storage.
-	storageConnectors, err := c.Storage.ListConnectors()
-	if err != nil {
-		return nil, fmt.Errorf("server: failed to list connector objects from storage: %v", err)
-	}
-
-	if len(storageConnectors) == 0 && len(s.connectors) == 0 {
-		return nil, errors.New("server: no connectors specified")
-	}
-
-	for _, conn := range storageConnectors {
-		if _, err := s.OpenConnector(conn); err != nil {
-			return nil, fmt.Errorf("server: Failed to open connector %s: %v", conn.ID, err)
-		}
 	}
 
 	requestCounter := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -314,34 +277,34 @@ func (s *Server) absURL(pathItems ...string) string {
 	return u.String()
 }
 
-func newPasswordDB(s storage.Storage) interface {
-	connector.Connector
-	connector.PasswordConnector
+func newPasswordDB(s Storage) interface {
+	Connector
+	PasswordConnector
 } {
 	return passwordDB{s}
 }
 
 type passwordDB struct {
-	s storage.Storage
+	s Storage
 }
 
-func (db passwordDB) Login(ctx context.Context, s connector.Scopes, email, password string) (connector.Identity, bool, error) {
+func (db passwordDB) Login(ctx context.Context, s Scopes, email, password string) (Identity, bool, error) {
 	p, err := db.s.GetPassword(email)
 	if err != nil {
-		if err != storage.ErrNotFound {
-			return connector.Identity{}, false, fmt.Errorf("get password: %v", err)
+		if err != ErrNotFound {
+			return Identity{}, false, fmt.Errorf("get password: %v", err)
 		}
-		return connector.Identity{}, false, nil
+		return Identity{}, false, nil
 	}
 	// This check prevents dex users from logging in using static passwords
 	// configured with hash costs that are too high or low.
 	if err := checkCost(p.Hash); err != nil {
-		return connector.Identity{}, false, err
+		return Identity{}, false, err
 	}
 	if err := bcrypt.CompareHashAndPassword(p.Hash, []byte(password)); err != nil {
-		return connector.Identity{}, false, nil
+		return Identity{}, false, nil
 	}
-	return connector.Identity{
+	return Identity{
 		UserID:        p.UserID,
 		Username:      p.Username,
 		Email:         p.Email,
@@ -349,19 +312,19 @@ func (db passwordDB) Login(ctx context.Context, s connector.Scopes, email, passw
 	}, true, nil
 }
 
-func (db passwordDB) Refresh(ctx context.Context, s connector.Scopes, identity connector.Identity) (connector.Identity, error) {
+func (db passwordDB) Refresh(ctx context.Context, s Scopes, identity Identity) (Identity, error) {
 	// If the user has been deleted, the refresh token will be rejected.
 	p, err := db.s.GetPassword(identity.Email)
 	if err != nil {
-		if err == storage.ErrNotFound {
-			return connector.Identity{}, errors.New("user not found")
+		if err == ErrNotFound {
+			return Identity{}, errors.New("user not found")
 		}
-		return connector.Identity{}, fmt.Errorf("get password: %v", err)
+		return Identity{}, fmt.Errorf("get password: %v", err)
 	}
 
 	// User removed but a new user with the same email exists.
 	if p.UserID != identity.UserID {
-		return connector.Identity{}, errors.New("user not found")
+		return Identity{}, errors.New("user not found")
 	}
 
 	// If a user has updated their username, that will be reflected in the
@@ -379,7 +342,7 @@ func (db passwordDB) Prompt() string {
 }
 
 // newKeyCacher returns a storage which caches keys so long as the next
-func newKeyCacher(s storage.Storage, now func() time.Time) storage.Storage {
+func newKeyCacher(s Storage, now func() time.Time) Storage {
 	if now == nil {
 		now = time.Now
 	}
@@ -387,14 +350,14 @@ func newKeyCacher(s storage.Storage, now func() time.Time) storage.Storage {
 }
 
 type keyCacher struct {
-	storage.Storage
+	Storage
 
 	now  func() time.Time
 	keys atomic.Value // Always holds nil or type *storage.Keys.
 }
 
-func (k *keyCacher) GetKeys() (storage.Keys, error) {
-	keys, ok := k.keys.Load().(*storage.Keys)
+func (k *keyCacher) GetKeys() (Keys, error) {
+	keys, ok := k.keys.Load().(*Keys)
 	if ok && keys != nil && k.now().Before(keys.NextRotation) {
 		return *keys, nil
 	}
@@ -428,103 +391,29 @@ func (s *Server) startGarbageCollection(ctx context.Context, frequency time.Dura
 	return
 }
 
-// ConnectorConfig is a configuration that can open a connector.
-type ConnectorConfig interface {
-	Open(id string, logger log.Logger) (connector.Connector, error)
-}
+const (
+	// recCost is the recommended bcrypt cost, which balances hash strength and
+	// efficiency.
+	recCost = 12
 
-// ConnectorsConfig variable provides an easy way to return a config struct
-// depending on the connector type.
-var ConnectorsConfig = map[string]func() ConnectorConfig{
-	"keystone":        func() ConnectorConfig { return new(keystone.Config) },
-	"mockCallback":    func() ConnectorConfig { return new(mock.CallbackConfig) },
-	"mockPassword":    func() ConnectorConfig { return new(mock.PasswordConfig) },
-	"ldap":            func() ConnectorConfig { return new(ldap.Config) },
-	"github":          func() ConnectorConfig { return new(github.Config) },
-	"gitlab":          func() ConnectorConfig { return new(gitlab.Config) },
-	"oidc":            func() ConnectorConfig { return new(oidc.Config) },
-	"saml":            func() ConnectorConfig { return new(saml.Config) },
-	"authproxy":       func() ConnectorConfig { return new(authproxy.Config) },
-	"linkedin":        func() ConnectorConfig { return new(linkedin.Config) },
-	"microsoft":       func() ConnectorConfig { return new(microsoft.Config) },
-	"bitbucket-cloud": func() ConnectorConfig { return new(bitbucketcloud.Config) },
-	// Keep around for backwards compatibility.
-	"samlExperimental": func() ConnectorConfig { return new(saml.Config) },
-}
+	// upBoundCost is a sane upper bound on bcrypt cost determined by benchmarking:
+	// high enough to ensure secure encryption, low enough to not put unnecessary
+	// load on a dex server.
+	upBoundCost = 16
+)
 
-// openConnector will parse the connector config and open the connector.
-func openConnector(logger log.Logger, conn storage.Connector) (connector.Connector, error) {
-	var c connector.Connector
-
-	f, ok := ConnectorsConfig[conn.Type]
-	if !ok {
-		return c, fmt.Errorf("unknown connector type %q", conn.Type)
-	}
-
-	connConfig := f()
-	if len(conn.Config) != 0 {
-		data := []byte(string(conn.Config))
-		if err := json.Unmarshal(data, connConfig); err != nil {
-			return c, fmt.Errorf("parse connector config: %v", err)
-		}
-	}
-
-	c, err := connConfig.Open(conn.ID, logger)
+// checkCost returns an error if the hash provided does not meet lower or upper
+// bound cost requirements.
+func checkCost(hash []byte) error {
+	actual, err := bcrypt.Cost(hash)
 	if err != nil {
-		return c, fmt.Errorf("failed to create connector %s: %v", conn.ID, err)
+		return fmt.Errorf("parsing bcrypt hash: %v", err)
 	}
-
-	return c, nil
-}
-
-// OpenConnector updates server connector map with specified connector object.
-func (s *Server) OpenConnector(conn storage.Connector) (Connector, error) {
-	var c connector.Connector
-
-	if conn.Type == LocalConnector {
-		c = newPasswordDB(s.storage)
-	} else {
-		var err error
-		c, err = openConnector(s.logger, conn)
-		if err != nil {
-			return Connector{}, fmt.Errorf("failed to open connector: %v", err)
-		}
+	if actual < bcrypt.DefaultCost {
+		return fmt.Errorf("given hash cost = %d does not meet minimum cost requirement = %d", actual, bcrypt.DefaultCost)
 	}
-
-	connector := Connector{
-		ResourceVersion: conn.ResourceVersion,
-		Connector:       c,
+	if actual > upBoundCost {
+		return fmt.Errorf("given hash cost = %d is above upper bound cost = %d, recommended cost = %d", actual, upBoundCost, recCost)
 	}
-	s.mu.Lock()
-	s.connectors[conn.ID] = connector
-	s.mu.Unlock()
-
-	return connector, nil
-}
-
-// getConnector retrieves the connector object with the given id from the storage
-// and updates the connector list for server if necessary.
-func (s *Server) getConnector(id string) (Connector, error) {
-	storageConnector, err := s.storage.GetConnector(id)
-	if err != nil {
-		return Connector{}, fmt.Errorf("failed to get connector object from storage: %v", err)
-	}
-
-	var conn Connector
-	var ok bool
-	s.mu.Lock()
-	conn, ok = s.connectors[id]
-	s.mu.Unlock()
-
-	if !ok || storageConnector.ResourceVersion != conn.ResourceVersion {
-		// Connector object does not exist in server connectors map or
-		// has been updated in the storage. Need to get latest.
-		conn, err := s.OpenConnector(storageConnector)
-		if err != nil {
-			return Connector{}, fmt.Errorf("failed to open connector: %v", err)
-		}
-		return conn, nil
-	}
-
-	return conn, nil
+	return nil
 }

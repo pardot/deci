@@ -7,12 +7,9 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-
-	"github.com/dexidp/dex/storage"
-	"github.com/dexidp/dex/storage/memory"
 )
 
-func signingKeyID(t *testing.T, s storage.Storage) string {
+func signingKeyID(t *testing.T, s Storage) string {
 	keys, err := s.GetKeys()
 	if err != nil {
 		t.Fatal(err)
@@ -20,7 +17,7 @@ func signingKeyID(t *testing.T, s storage.Storage) string {
 	return keys.SigningKey.KeyID
 }
 
-func verificationKeyIDs(t *testing.T, s storage.Storage) (ids []string) {
+func verificationKeyIDs(t *testing.T, s Storage) (ids []string) {
 	keys, err := s.GetKeys()
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +71,7 @@ func TestKeyRotater(t *testing.T) {
 	}
 
 	r := &keyRotater{
-		Storage:  memory.New(l),
+		Storage:  newMemoryStore(l),
 		strategy: defaultRotationStrategy(rotationFrequency, validFor),
 		now:      func() time.Time { return now },
 		logger:   l,
