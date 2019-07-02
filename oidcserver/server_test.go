@@ -414,7 +414,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		func() {
+		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
@@ -535,7 +535,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 			if respDump, err = httputil.DumpResponse(resp, true); err != nil {
 				t.Fatal(err)
 			}
-		}()
+		})
 	}
 }
 
@@ -970,36 +970,37 @@ func TestPasswordDB(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		ident, valid, err := conn.Login(context.Background(), Scopes{}, tc.username, tc.password)
-		if err != nil {
-			if !tc.wantErr {
-				t.Errorf("%s: %v", tc.name, err)
+		t.Run(tc.name, func(t *testing.T) {
+			ident, valid, err := conn.Login(context.Background(), Scopes{}, tc.username, tc.password)
+			if err != nil {
+				if !tc.wantErr {
+					t.Errorf("%s: %v", tc.name, err)
+				}
+				return
 			}
-			continue
-		}
 
-		if tc.wantErr {
-			t.Errorf("%s: expected error", tc.name)
-			continue
-		}
-
-		if !valid {
-			if !tc.wantInvalid {
-				t.Errorf("%s: expected valid password", tc.name)
+			if tc.wantErr {
+				t.Errorf("%s: expected error", tc.name)
+				return
 			}
-			continue
-		}
 
-		if tc.wantInvalid {
-			t.Errorf("%s: expected invalid password", tc.name)
-			continue
-		}
+			if !valid {
+				if !tc.wantInvalid {
+					t.Errorf("%s: expected valid password", tc.name)
+				}
+				return
+			}
 
-		if diff := pretty.Compare(tc.wantIdentity, ident); diff != "" {
-			t.Errorf("%s: %s", tc.name, diff)
-		}
+			if tc.wantInvalid {
+				t.Errorf("%s: expected invalid password", tc.name)
+				return
+			}
+
+			if diff := pretty.Compare(tc.wantIdentity, ident); diff != "" {
+				t.Errorf("%s: %s", tc.name, diff)
+			}
+		})
 	}
-
 }
 
 func TestPasswordDBUsernamePrompt(t *testing.T) {
@@ -1078,14 +1079,16 @@ func TestKeyCacher(t *testing.T) {
 	gotCall := false
 	s = newKeyCacher(storageWithKeysTrigger{s, func() { gotCall = true }}, now)
 	for i, tc := range tests {
-		gotCall = false
-		tc.before()
-		if _, err := s.GetKeys(); err != nil {
-			t.Fatal(err)
-		}
-		if gotCall != tc.wantCallToStorage {
-			t.Errorf("case %d: expected call to storage=%t got call to storage=%t", i, tc.wantCallToStorage, gotCall)
-		}
+		t.Run(fmt.Sprintf("Case %d", i), func(t *testing.T) {
+			gotCall = false
+			tc.before()
+			if _, err := s.GetKeys(); err != nil {
+				t.Fatal(err)
+			}
+			if gotCall != tc.wantCallToStorage {
+				t.Errorf("case %d: expected call to storage=%t got call to storage=%t", i, tc.wantCallToStorage, gotCall)
+			}
+		})
 	}
 }
 
@@ -1229,16 +1232,18 @@ func TestCheckCost(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		if err := checkCost(tc.inputHash); err != nil {
-			if !tc.wantErr {
-				t.Errorf("%s: %s", tc.name, err)
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkCost(tc.inputHash); err != nil {
+				if !tc.wantErr {
+					t.Errorf("%s: %s", tc.name, err)
+				}
+				return
 			}
-			continue
-		}
 
-		if tc.wantErr {
-			t.Errorf("%s: expected err", tc.name)
-			continue
-		}
+			if tc.wantErr {
+				t.Errorf("%s: expected err", tc.name)
+				return
+			}
+		})
 	}
 }
