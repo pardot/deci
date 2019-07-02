@@ -135,7 +135,6 @@ func parseScopes(scopes []string) Scopes {
 	return s
 }
 
-
 // The hash algorithm for the at_hash is determined by the signing
 // algorithm used for the id_token. From the spec:
 //
@@ -506,4 +505,3 @@ func validateRedirectURI(client Client, redirectURI string) bool {
 	host, _, err := net.SplitHostPort(u.Host)
 	return err == nil && host == "localhost"
 }
-

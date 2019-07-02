@@ -121,7 +121,7 @@ func (s *Server) handlePublicKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO(lstoll): is it worth setting a better time for this, and caching here?
-	maxAge := 1*time.Minute
+	maxAge := 1 * time.Minute
 
 	w.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d, must-revalidate", int(maxAge.Seconds())))
 	w.Header().Set("Content-Type", "application/json")

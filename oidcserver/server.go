@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-	"gopkg.in/square/go-jose.v2"
 	"github.com/felixge/httpsnoop"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/square/go-jose.v2"
 )
 
 // LocalConnector is the local passwordDB connector which is an internal

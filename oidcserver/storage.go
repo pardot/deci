@@ -306,4 +306,3 @@ type Password struct {
 // 	// no generic struct we can use for this purpose, it is stored as a byte stream.
 // 	Config []byte `json:"email"`
 // }
-

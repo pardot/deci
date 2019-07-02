@@ -1205,9 +1205,9 @@ func newMockSigner(t *testing.T) *mockSigner {
 // PublicKeys returns a keyset of all valid signer public keys considered
 // valid for signed tokens
 func (m *mockSigner) PublicKeys() (*jose.JSONWebKeySet, error) {
-return &jose.JSONWebKeySet{
-	Keys: m.verificationKeys,
-}, nil
+	return &jose.JSONWebKeySet{
+		Keys: m.verificationKeys,
+	}, nil
 }
 
 // SignerAlg returns the algorithm the signer uses
@@ -1227,7 +1227,7 @@ func (m *mockSigner) Sign(data []byte) (signed []byte, err error) {
 		return nil, err
 	}
 
- ser, err := jws.CompactSerialize()
+	ser, err := jws.CompactSerialize()
 	return []byte(ser), err
 }
 
