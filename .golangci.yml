@@ -9,11 +9,6 @@ issues:
   exclude:
     - "exported \\w+ (\\S*['.]*)([a-zA-Z'.*]*) should have comment( \\(or a comment on this block\\))? or be unexported"
     - "Error return value of .((os\\.)?std(out|err)\\..*|.*Close|.*Flush|os\\.Remove(All)?|.*printf?|os\\.(Un)?Setenv). is not checked"
-  exclude-rules:
-    # Exclude some linters from running on tests files.
-    - path: _test\.go
-      linters:
-        - errcheck
 
 linters:
   enable:
