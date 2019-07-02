@@ -95,11 +95,12 @@ func newTestServer(ctx context.Context, t *testing.T, updateConfig func(c *Confi
 	s.URL = config.Issuer
 
 	var err error
-	if server, err = newServer(ctx, config, staticRotationStrategy(testKey)); err != nil {
+	if server, err = newServer(ctx, config); err != nil {
 		t.Fatal(err)
 	}
 	server.connectors = map[string]Connector{"mock": NewCallbackConnector(logger)}
 	server.skipApproval = true // Don't prompt for approval, just immediately redirect with code.
+	server.signer = newMockSigner(t)
 	return s, server
 }
 
@@ -181,6 +182,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 				if !ok {
 					return fmt.Errorf("no id token found")
 				}
+				t.Logf("token: %s", idToken)
 				if _, err := p.Verifier(oidcConfig).Verify(ctx, idToken); err != nil {
 					return fmt.Errorf("failed to verify id token: %v", err)
 				}
@@ -1013,85 +1015,6 @@ func TestPasswordDBUsernamePrompt(t *testing.T) {
 	}
 }
 
-type storageWithKeysTrigger struct {
-	Storage
-	f func()
-}
-
-func (s storageWithKeysTrigger) GetKeys() (Keys, error) {
-	s.f()
-	return s.Storage.GetKeys()
-}
-
-func TestKeyCacher(t *testing.T) {
-	tNow := time.Now()
-	now := func() time.Time { return tNow }
-
-	s := newMemoryStore(logger)
-
-	tests := []struct {
-		before            func()
-		wantCallToStorage bool
-	}{
-		{
-			before:            func() {},
-			wantCallToStorage: true,
-		},
-		{
-			before: func() {
-				if err := s.UpdateKeys(func(old Keys) (Keys, error) {
-					old.NextRotation = tNow.Add(time.Minute)
-					return old, nil
-				}); err != nil {
-					t.Fatal(err)
-				}
-			},
-			wantCallToStorage: true,
-		},
-		{
-			before:            func() {},
-			wantCallToStorage: false,
-		},
-		{
-			before: func() {
-				tNow = tNow.Add(time.Hour)
-			},
-			wantCallToStorage: true,
-		},
-		{
-			before: func() {
-				tNow = tNow.Add(time.Hour)
-				if err := s.UpdateKeys(func(old Keys) (Keys, error) {
-					old.NextRotation = tNow.Add(time.Minute)
-					return old, nil
-				}); err != nil {
-					t.Fatal(err)
-				}
-			},
-			wantCallToStorage: true,
-		},
-		{
-			before:            func() {},
-			wantCallToStorage: false,
-		},
-	}
-
-	gotCall := false
-	s = newKeyCacher(storageWithKeysTrigger{s, func() { gotCall = true }}, now)
-	for i, tc := range tests {
-		t.Run(fmt.Sprintf("Case %d", i), func(t *testing.T) {
-			gotCall = false
-			tc.before()
-			if _, err := s.GetKeys(); err != nil {
-				t.Fatal(err)
-			}
-			if gotCall != tc.wantCallToStorage {
-				t.Errorf("case %d: expected call to storage=%t got call to storage=%t", i, tc.wantCallToStorage, gotCall)
-			}
-		})
-	}
-}
-
 type oauth2Client struct {
 	config *oauth2.Config
 	token  *oauth2.Token
@@ -1246,4 +1169,88 @@ func TestCheckCost(t *testing.T) {
 			}
 		})
 	}
+}
+
+var _ Signer = (*mockSigner)(nil)
+
+// TODO - this really does too much for a mock, but has been kept like this to
+// match existing test expectations. We should shrink this down a bit.
+// Alternatively, move it to a first-class implementation like "StaticSigner"
+type mockSigner struct {
+	signingKey       *jose.JSONWebKey
+	verificationKeys []jose.JSONWebKey
+}
+
+func newMockSigner(t *testing.T) *mockSigner {
+	t.Helper()
+
+	return &mockSigner{
+		signingKey: &jose.JSONWebKey{
+			Key:       testKey,
+			KeyID:     "testkey",
+			Algorithm: "RS256",
+			Use:       "sig",
+		},
+		verificationKeys: []jose.JSONWebKey{
+			{
+				Key:       testKey.Public(),
+				KeyID:     "testkey",
+				Algorithm: "RS256",
+				Use:       "sig",
+			},
+		},
+	}
+}
+
+// PublicKeys returns a keyset of all valid signer public keys considered
+// valid for signed tokens
+func (m *mockSigner) PublicKeys() (*jose.JSONWebKeySet, error) {
+return &jose.JSONWebKeySet{
+	Keys: m.verificationKeys,
+}, nil
+}
+
+// SignerAlg returns the algorithm the signer uses
+func (m *mockSigner) SignerAlg() (jose.SignatureAlgorithm, error) {
+	return jose.RS256, nil
+}
+
+// Sign the provided data
+func (m *mockSigner) Sign(data []byte) (signed []byte, err error) {
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: testKey}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	jws, err := signer.Sign(data)
+	if err != nil {
+		return nil, err
+	}
+
+ ser, err := jws.CompactSerialize()
+	return []byte(ser), err
+}
+
+// VerifySignature verifies the signature given token against the current signers
+func (m *mockSigner) VerifySignature(ctx context.Context, jwt string) (payload []byte, err error) {
+	jws, err := jose.ParseSigned(jwt)
+	if err != nil {
+		return nil, err
+	}
+
+	keyID := ""
+	for _, sig := range jws.Signatures {
+		keyID = sig.Header.KeyID
+		break
+	}
+
+	for _, key := range m.verificationKeys {
+		if keyID == "" || key.KeyID == keyID {
+			if payload, err := jws.Verify(key); err == nil {
+				return payload, nil
+			}
+		}
+	}
+
+	return nil, errors.New("failed to verify id token signature")
 }
