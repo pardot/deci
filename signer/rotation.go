@@ -1,4 +1,4 @@
-package oidcserver
+package signer
 
 import (
 	"context"
@@ -17,9 +17,40 @@ import (
 
 var errAlreadyRotated = errors.New("keys already rotated by another server instance")
 
-// rotationStrategy describes a strategy for generating cryptographic keys, how
+// ErrNotFound is the error returned by storages if a resource cannot be found.
+var	ErrNotFound = errors.New("not found")
+
+// VerificationKey is a rotated signing key which can still be used to verify
+// signatures.
+type VerificationKey struct {
+	PublicKey *jose.JSONWebKey `json:"publicKey"`
+	Expiry    time.Time        `json:"expiry"`
+}
+
+// Keys hold encryption and signing keys.
+type Keys struct {
+	// Key for creating and verifying signatures. These may be nil.
+	SigningKey    *jose.JSONWebKey
+	SigningKeyPub *jose.JSONWebKey
+
+	// Old signing keys which have been rotated but can still be used to validate
+	// existing signatures.
+	VerificationKeys []VerificationKey
+
+	// The next time the signing key will rotate.
+	//
+	// For caching purposes, implementations MUST NOT update keys before this time.
+	NextRotation time.Time
+}
+
+type Storage interface {
+	GetKeys() (Keys, error)
+	UpdateKeys(updater func(old Keys) (Keys, error)) error
+}
+
+// RotationStrategy describes a strategy for generating cryptographic keys, how
 // often to rotate them, and how long they can validate signatures after rotation.
-type rotationStrategy struct {
+type RotationStrategy struct {
 	// Time between rotations.
 	rotationFrequency time.Duration
 
@@ -32,9 +63,9 @@ type rotationStrategy struct {
 	key func() (*rsa.PrivateKey, error)
 }
 
-// staticRotationStrategy returns a strategy which never rotates keys.
-func staticRotationStrategy(key *rsa.PrivateKey) rotationStrategy {
-	return rotationStrategy{
+// StaticRotationStrategy returns a strategy which never rotates keys.
+func StaticRotationStrategy(key *rsa.PrivateKey) RotationStrategy {
+	return RotationStrategy{
 		// Setting these values to 100 years is easier than having a flag indicating no rotation.
 		rotationFrequency: time.Hour * 8760 * 100,
 		idTokenValidFor:   time.Hour * 8760 * 100,
@@ -42,10 +73,10 @@ func staticRotationStrategy(key *rsa.PrivateKey) rotationStrategy {
 	}
 }
 
-// defaultRotationStrategy returns a strategy which rotates keys every provided period,
+// DefaultRotationStrategy returns a strategy which rotates keys every provided period,
 // holding onto the public parts for some specified amount of time.
-func defaultRotationStrategy(rotationFrequency, idTokenValidFor time.Duration) rotationStrategy {
-	return rotationStrategy{
+func DefaultRotationStrategy(rotationFrequency, idTokenValidFor time.Duration) RotationStrategy {
+	return RotationStrategy{
 		rotationFrequency: rotationFrequency,
 		idTokenValidFor:   idTokenValidFor,
 		key: func() (*rsa.PrivateKey, error) {
@@ -54,24 +85,32 @@ func defaultRotationStrategy(rotationFrequency, idTokenValidFor time.Duration) r
 	}
 }
 
-type keyRotater struct {
-	Storage
+// Signer is a OIDC signer that automatically rotates signing keys
+type Signer struct {
+	storage Storage
 
-	strategy rotationStrategy
+	strategy RotationStrategy
 	now      func() time.Time
 
 	logger logrus.FieldLogger
 }
 
-// startKeyRotation begins key rotation in a new goroutine, closing once the context is canceled.
+func NewSigner(l logrus.FieldLogger, storage Storage, strategy RotationStrategy) *Signer {
+	return &Signer{
+		storage: storage,
+		logger: l,
+		strategy: strategy,
+		now: time.Now,
+	}
+}
+
+// Start begins key rotation in a new goroutine, closing once the context is canceled.
 //
 // The method blocks until after the first attempt to rotate keys has completed. That way
 // healthy storages will return from this call with valid keys.
-func (s *Server) startKeyRotation(ctx context.Context, strategy rotationStrategy, now func() time.Time) {
-	rotater := keyRotater{s.storage, strategy, now, s.logger}
-
+func (s *Signer) Start(ctx context.Context) {
 	// Try to rotate immediately so properly configured storages will have keys.
-	if err := rotater.rotate(); err != nil {
+	if err := s.rotate(); err != nil {
 		if err == errAlreadyRotated {
 			s.logger.Infof("Key rotation not needed: %v", err)
 		} else {
@@ -85,7 +124,7 @@ func (s *Server) startKeyRotation(ctx context.Context, strategy rotationStrategy
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Second * 30):
-				if err := rotater.rotate(); err != nil {
+				if err := s.rotate(); err != nil {
 					s.logger.Errorf("failed to rotate keys: %v", err)
 				}
 			}
@@ -93,18 +132,18 @@ func (s *Server) startKeyRotation(ctx context.Context, strategy rotationStrategy
 	}()
 }
 
-func (k keyRotater) rotate() error {
-	keys, err := k.GetKeys()
+func (s *Signer) rotate() error {
+	keys, err := s.storage.GetKeys()
 	if err != nil && err != ErrNotFound {
 		return fmt.Errorf("get keys: %v", err)
 	}
-	if k.now().Before(keys.NextRotation) {
+	if s.now().Before(keys.NextRotation) {
 		return nil
 	}
-	k.logger.Infof("keys expired, rotating")
+	s.logger.Infof("keys expired, rotating")
 
 	// Generate the key outside of a storage transaction.
-	key, err := k.strategy.key()
+	key, err := s.strategy.key()
 	if err != nil {
 		return fmt.Errorf("generate key: %v", err)
 	}
@@ -127,8 +166,8 @@ func (k keyRotater) rotate() error {
 	}
 
 	var nextRotation time.Time
-	err = k.Storage.UpdateKeys(func(keys Keys) (Keys, error) {
-		tNow := k.now()
+	err = s.storage.UpdateKeys(func(keys Keys) (Keys, error) {
+		tNow := s.now()
 
 		// if you are running multiple instances of dex, another instance
 		// could have already rotated the keys.
@@ -159,12 +198,12 @@ func (k keyRotater) rotate() error {
 				// the amount of time an ID Token is valid for. This ensures the
 				// verification key won't expire until all ID Tokens it's signed
 				// expired as well.
-				Expiry: tNow.Add(k.strategy.idTokenValidFor),
+				Expiry: tNow.Add(s.strategy.idTokenValidFor),
 			}
 			keys.VerificationKeys = append(keys.VerificationKeys, verificationKey)
 		}
 
-		nextRotation = k.now().Add(k.strategy.rotationFrequency)
+		nextRotation = s.now().Add(s.strategy.rotationFrequency)
 		keys.SigningKey = priv
 		keys.SigningKeyPub = pub
 		keys.NextRotation = nextRotation
@@ -173,6 +212,6 @@ func (k keyRotater) rotate() error {
 	if err != nil {
 		return err
 	}
-	k.logger.Infof("keys rotated, next rotation: %s", nextRotation)
+	s.logger.Infof("keys rotated, next rotation: %s", nextRotation)
 	return nil
 }
