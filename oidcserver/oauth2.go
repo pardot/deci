@@ -1,6 +1,7 @@
 package oidcserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -241,7 +242,7 @@ func (s *Server) newIDToken(clientID string, claims Claims, scopes []string, non
 		IssuedAt: issuedAt.Unix(),
 	}
 
-	signingAlg, err := s.signer.SignerAlg()
+	signingAlg, err := s.signer.SignerAlg(context.TODO())
 	if err != nil {
 		return "", expiry, err
 	}
@@ -308,7 +309,7 @@ func (s *Server) newIDToken(clientID string, claims Claims, scopes []string, non
 		return "", expiry, fmt.Errorf("could not serialize claims: %v", err)
 	}
 
-	signed, err := s.signer.Sign(payload)
+	signed, err := s.signer.Sign(context.TODO(), payload)
 	if err != nil {
 		return "", expiry, fmt.Errorf("failed to sign payload: %v", err)
 	}

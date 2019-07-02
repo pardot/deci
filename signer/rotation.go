@@ -231,27 +231,27 @@ func (r *RotatingSigner) rotate() error {
 
 // PublicKeys returns a keyset of all valid signer public keys considered
 // valid for signed tokens
-func (r *RotatingSigner) PublicKeys() (*jose.JSONWebKeySet, error) {
+func (r *RotatingSigner) PublicKeys(ctx context.Context) (*jose.JSONWebKeySet, error) {
 	if r.signer == nil {
 		return nil, errors.New("Signer not initialized")
 	}
-	return r.signer.PublicKeys()
+	return r.signer.PublicKeys(ctx)
 }
 
 // SignerAlg returns the algorithm the signer uses
-func (r *RotatingSigner) SignerAlg() (jose.SignatureAlgorithm, error) {
+func (r *RotatingSigner) SignerAlg(ctx context.Context) (jose.SignatureAlgorithm, error) {
 	if r.signer == nil {
 		return jose.SignatureAlgorithm(""), errors.New("Signer not initialized")
 	}
-	return r.signer.SignerAlg()
+	return r.signer.SignerAlg(ctx)
 }
 
 // Sign the provided data
-func (r *RotatingSigner) Sign(data []byte) (signed []byte, err error) {
+func (r *RotatingSigner) Sign(ctx context.Context, data []byte) (signed []byte, err error) {
 	if r.signer == nil {
 		return nil, errors.New("Signer not initialized")
 	}
-	return r.signer.Sign(data)
+	return r.signer.Sign(ctx, data)
 }
 
 // VerifySignature verifies the signature given token against the current signers

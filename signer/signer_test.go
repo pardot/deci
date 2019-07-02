@@ -15,9 +15,9 @@ import (
 )
 
 type signer interface {
-	PublicKeys() (*jose.JSONWebKeySet, error)
-	SignerAlg() (jose.SignatureAlgorithm, error)
-	Sign(data []byte) (signed []byte, err error)
+	PublicKeys(_ context.Context) (*jose.JSONWebKeySet, error)
+	SignerAlg(_ context.Context) (jose.SignatureAlgorithm, error)
+	Sign(_ context.Context, data []byte) (signed []byte, err error)
 	VerifySignature(ctx context.Context, jwt string) (payload []byte, err error)
 }
 
@@ -75,7 +75,7 @@ func TestSigner(t *testing.T) {
 				{
 					name: "valid token",
 					tokenGenerator: func() (string, error) {
-						s, err := signer.Sign([]byte("payload"))
+						s, err := signer.Sign(ctx, []byte("payload"))
 						return string(s), err
 					},
 					wantErr: false,

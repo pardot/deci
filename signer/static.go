@@ -23,19 +23,19 @@ func NewStatic(signingKey jose.SigningKey, verificationKeys []jose.JSONWebKey) *
 
 // PublicKeys returns a keyset of all valid signer public keys considered
 // valid for signed tokens
-func (s *StaticSigner) PublicKeys() (*jose.JSONWebKeySet, error) {
+func (s *StaticSigner) PublicKeys(_ context.Context) (*jose.JSONWebKeySet, error) {
 	return &jose.JSONWebKeySet{
 		Keys: s.verificationKeys,
 	}, nil
 }
 
 // SignerAlg returns the algorithm the signer uses
-func (s *StaticSigner) SignerAlg() (jose.SignatureAlgorithm, error) {
+func (s *StaticSigner) SignerAlg(_ context.Context) (jose.SignatureAlgorithm, error) {
 	return jose.RS256, nil
 }
 
 // Sign the provided data
-func (s *StaticSigner) Sign(data []byte) (signed []byte, err error) {
+func (s *StaticSigner) Sign(_ context.Context, data []byte) (signed []byte, err error) {
 	signer, err := jose.NewSigner(s.signingKey, nil)
 	if err != nil {
 		return nil, err

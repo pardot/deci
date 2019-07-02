@@ -28,11 +28,11 @@ const LocalConnector = "local"
 type Signer interface {
 	// PublicKeys returns a keyset of all valid signer public keys considered
 	// valid for signed tokens
-	PublicKeys() (*jose.JSONWebKeySet, error)
+	PublicKeys(ctx context.Context) (*jose.JSONWebKeySet, error)
 	// SignerAlg returns the algorithm the signer uses
-	SignerAlg() (jose.SignatureAlgorithm, error)
+	SignerAlg(ctx context.Context) (jose.SignatureAlgorithm, error)
 	// Sign the provided data
-	Sign(data []byte) (signed []byte, err error)
+	Sign(ctx context.Context, data []byte) (signed []byte, err error)
 	// VerifySignature verifies the signature given token against the current signers
 	VerifySignature(ctx context.Context, jwt string) (payload []byte, err error)
 }

@@ -106,7 +106,7 @@ func (h *healthChecker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePublicKeys(w http.ResponseWriter, r *http.Request) {
-	ks, err := s.signer.PublicKeys()
+	ks, err := s.signer.PublicKeys(r.Context())
 	if err != nil {
 		s.logger.WithError(err).Error("failed to fetch public keys")
 		s.renderError(w, http.StatusInternalServerError, "Internal server error.")
