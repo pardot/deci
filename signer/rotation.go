@@ -92,10 +92,6 @@ type RotatingSigner struct {
 	strategy RotationStrategy
 	now      func() time.Time
 
-	// signer represents a snapshot of the current state. we delegate to this,
-	// and replace it on rotation
-	signer *StaticSigner
-
 	logger logrus.FieldLogger
 }
 
@@ -141,7 +137,6 @@ func (r *RotatingSigner) rotate() error {
 	if err != nil && err != ErrNotFound {
 		return fmt.Errorf("get keys: %v", err)
 	}
-	r.signer = newStaticFromKeys(keys)
 	if r.now().Before(keys.NextRotation) {
 		return nil
 	}
@@ -218,63 +213,64 @@ func (r *RotatingSigner) rotate() error {
 		return err
 	}
 
-	// Update post rotation
-	keys, err = r.storage.GetKeys()
-	if err != nil && err != ErrNotFound {
-		return fmt.Errorf("get keys: %v", err)
-	}
-	r.signer = newStaticFromKeys(keys)
-
 	r.logger.Infof("keys rotated, next rotation: %s", nextRotation)
 	return nil
 }
 
 // PublicKeys returns a keyset of all valid signer public keys considered
 // valid for signed tokens
-func (r *RotatingSigner) PublicKeys(ctx context.Context) (*jose.JSONWebKeySet, error) {
-	if r.signer == nil {
-		return nil, errors.New("Signer not initialized")
+func (r *RotatingSigner) PublicKeys(_ context.Context) (*jose.JSONWebKeySet, error) {
+	keys, err := r.storage.GetKeys()
+	if err != nil {
+		return nil, err
 	}
-	return r.signer.PublicKeys(ctx)
+	vks := []jose.JSONWebKey{}
+	if keys.SigningKeyPub != nil {
+		vks = append(vks, *keys.SigningKeyPub)
+	}
+	for _, k := range keys.VerificationKeys {
+		vks = append(vks, *k.PublicKey)
+	}
+	return &jose.JSONWebKeySet{
+		Keys: vks,
+	}, nil
 }
 
 // SignerAlg returns the algorithm the signer uses
-func (r *RotatingSigner) SignerAlg(ctx context.Context) (jose.SignatureAlgorithm, error) {
-	if r.signer == nil {
-		return jose.SignatureAlgorithm(""), errors.New("Signer not initialized")
+func (r *RotatingSigner) SignerAlg(_ context.Context) (jose.SignatureAlgorithm, error) {
+	keys, err := r.storage.GetKeys()
+	if err != nil {
+		return jose.SignatureAlgorithm(""), err
 	}
-	return r.signer.SignerAlg(ctx)
+	return jose.SignatureAlgorithm(keys.SigningKey.Algorithm), nil
 }
 
 // Sign the provided data
 func (r *RotatingSigner) Sign(ctx context.Context, data []byte) (signed []byte, err error) {
-	if r.signer == nil {
-		return nil, errors.New("Signer not initialized")
+	keys, err := r.storage.GetKeys()
+	if err != nil {
+		return nil, err
 	}
-	return r.signer.Sign(ctx, data)
+	sk := jose.SigningKey{
+		Algorithm: jose.SignatureAlgorithm(keys.SigningKey.Algorithm),
+		Key:       keys.SigningKey.Key,
+	}
+	return sign(ctx, sk, data)
 }
 
 // VerifySignature verifies the signature given token against the current signers
 func (r *RotatingSigner) VerifySignature(ctx context.Context, jwt string) (payload []byte, err error) {
-	if r.signer == nil {
-		return nil, errors.New("Signer not initialized")
-	}
-	return r.signer.VerifySignature(ctx, jwt)
-}
-
-func newStaticFromKeys(k Keys) *StaticSigner {
-	if k.SigningKey == nil {
-		return nil
+	keys, err := r.storage.GetKeys()
+	if err != nil {
+		return nil, err
 	}
 	vks := []jose.JSONWebKey{}
-	if k.SigningKeyPub != nil {
-		vks = append(vks, *k.SigningKeyPub)
+	if keys.SigningKeyPub != nil {
+		vks = append(vks, *keys.SigningKeyPub)
 	}
-	for _, k := range k.VerificationKeys {
+	for _, k := range keys.VerificationKeys {
 		vks = append(vks, *k.PublicKey)
 	}
-	return NewStatic(
-		jose.SigningKey{Algorithm: jose.RS256, Key: k.SigningKey.Key},
-		vks,
-	)
+
+	return verifySignature(ctx, vks, jwt)
 }
