@@ -491,14 +491,13 @@ func TestOAuth2CodeFlow(t *testing.T) {
 					t.Errorf("state did not match, want=%q got=%q", state, gotState)
 				}
 				w.WriteHeader(http.StatusOK)
-				return
 			}))
 
 			defer oauth2Client.Close()
 
 			// Regester the client above with dex.
 			redirectURL := oauth2Client.URL + "/callback"
-			client :=Client{
+			client := Client{
 				ID:           clientID,
 				Secret:       clientSecret,
 				RedirectURIs: []string{redirectURL},
@@ -596,7 +595,7 @@ func TestOAuth2ImplicitFlow(t *testing.T) {
 	defer oauth2Server.Close()
 
 	redirectURL := oauth2Server.URL + "/callback"
-	client :=Client{
+	client := Client{
 		ID:           "testclient",
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -606,7 +605,7 @@ func TestOAuth2ImplicitFlow(t *testing.T) {
 	}
 
 	idTokenVerifier := p.Verifier(&oidc.Config{
-		ClientID:   client.ID,
+		ClientID: client.ID,
 	})
 
 	oauth2Config = &oauth2.Config{
@@ -753,7 +752,7 @@ func TestCrossClientScopes(t *testing.T) {
 	defer oauth2Server.Close()
 
 	redirectURL := oauth2Server.URL + "/callback"
-	client :=Client{
+	client := Client{
 		ID:           testClientID,
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -762,7 +761,7 @@ func TestCrossClientScopes(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	peer :=Client{
+	peer := Client{
 		ID:           peerID,
 		Secret:       "foobar",
 		TrustedPeers: []string{"testclient"},
@@ -875,7 +874,7 @@ func TestCrossClientScopesWithAzpInAudienceByDefault(t *testing.T) {
 	defer oauth2Server.Close()
 
 	redirectURL := oauth2Server.URL + "/callback"
-	client :=Client{
+	client := Client{
 		ID:           testClientID,
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -884,7 +883,7 @@ func TestCrossClientScopesWithAzpInAudienceByDefault(t *testing.T) {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	peer :=Client{
+	peer := Client{
 		ID:           peerID,
 		Secret:       "foobar",
 		TrustedPeers: []string{"testclient"},
@@ -1143,13 +1142,12 @@ func TestRefreshTokenFlow(t *testing.T) {
 			t.Errorf("state did not match, want=%q got=%q", state, gotState)
 		}
 		w.WriteHeader(http.StatusOK)
-		return
 	}))
 	defer oauth2Client.server.Close()
 
 	// Register the client above with dex.
 	redirectURL := oauth2Client.server.URL + "/callback"
-	client :=Client{
+	client := Client{
 		ID:           "testclient",
 		Secret:       "testclientsecret",
 		RedirectURIs: []string{redirectURL},
@@ -1182,6 +1180,9 @@ func TestRefreshTokenFlow(t *testing.T) {
 
 	// try to refresh expired token with old refresh token.
 	newToken, err := oauth2Client.config.TokenSource(ctx, tok).Token()
+	if err == nil {
+		t.Errorf("Want: error when using expired refresh token, but none returned")
+	}
 	if newToken != nil {
 		t.Errorf("Token refreshed with invalid refresh token.")
 	}
