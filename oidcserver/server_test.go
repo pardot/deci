@@ -927,12 +927,14 @@ func TestPasswordDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.CreatePassword(Password{
+	if err := s.CreatePassword(Password{
 		Email:    "jane@example.com",
 		Username: "jane",
 		UserID:   "foobar",
 		Hash:     h,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name         string
@@ -1036,10 +1038,12 @@ func TestKeyCacher(t *testing.T) {
 		},
 		{
 			before: func() {
-				s.UpdateKeys(func(old Keys) (Keys, error) {
+				if err := s.UpdateKeys(func(old Keys) (Keys, error) {
 					old.NextRotation = tNow.Add(time.Minute)
 					return old, nil
-				})
+				}); err != nil {
+					t.Fatal(err)
+				}
 			},
 			wantCallToStorage: true,
 		},
@@ -1056,10 +1060,12 @@ func TestKeyCacher(t *testing.T) {
 		{
 			before: func() {
 				tNow = tNow.Add(time.Hour)
-				s.UpdateKeys(func(old Keys) (Keys, error) {
+				if err := s.UpdateKeys(func(old Keys) (Keys, error) {
 					old.NextRotation = tNow.Add(time.Minute)
 					return old, nil
-				})
+				}); err != nil {
+					t.Fatal(err)
+				}
 			},
 			wantCallToStorage: true,
 		},
@@ -1074,7 +1080,9 @@ func TestKeyCacher(t *testing.T) {
 	for i, tc := range tests {
 		gotCall = false
 		tc.before()
-		s.GetKeys()
+		if _, err := s.GetKeys(); err != nil {
+			t.Fatal(err)
+		}
 		if gotCall != tc.wantCallToStorage {
 			t.Errorf("case %d: expected call to storage=%t got call to storage=%t", i, tc.wantCallToStorage, gotCall)
 		}
