@@ -18,7 +18,7 @@ import (
 var errAlreadyRotated = errors.New("keys already rotated by another server instance")
 
 // ErrNotFound is the error returned by storages if a resource cannot be found.
-var	ErrNotFound = errors.New("not found")
+var ErrNotFound = errors.New("not found")
 
 // VerificationKey is a rotated signing key which can still be used to verify
 // signatures.
@@ -85,22 +85,26 @@ func DefaultRotationStrategy(rotationFrequency, idTokenValidFor time.Duration) R
 	}
 }
 
-// Signer is a OIDC signer that automatically rotates signing keys
-type Signer struct {
+// RotatingSigner is a OIDC signer that automatically rotates signing keys
+type RotatingSigner struct {
 	storage Storage
 
 	strategy RotationStrategy
 	now      func() time.Time
 
+	// signer represents a snapshot of the current state. we delegate to this,
+	// and replace it on rotation
+	signer *StaticSigner
+
 	logger logrus.FieldLogger
 }
 
-func NewSigner(l logrus.FieldLogger, storage Storage, strategy RotationStrategy) *Signer {
-	return &Signer{
-		storage: storage,
-		logger: l,
+func NewRotating(l logrus.FieldLogger, storage Storage, strategy RotationStrategy) *RotatingSigner {
+	return &RotatingSigner{
+		storage:  storage,
+		logger:   l,
 		strategy: strategy,
-		now: time.Now,
+		now:      time.Now,
 	}
 }
 
@@ -108,13 +112,13 @@ func NewSigner(l logrus.FieldLogger, storage Storage, strategy RotationStrategy)
 //
 // The method blocks until after the first attempt to rotate keys has completed. That way
 // healthy storages will return from this call with valid keys.
-func (s *Signer) Start(ctx context.Context) {
+func (r *RotatingSigner) Start(ctx context.Context) {
 	// Try to rotate immediately so properly configured storages will have keys.
-	if err := s.rotate(); err != nil {
+	if err := r.rotate(); err != nil {
 		if err == errAlreadyRotated {
-			s.logger.Infof("Key rotation not needed: %v", err)
+			r.logger.Infof("Key rotation not needed: %v", err)
 		} else {
-			s.logger.Errorf("failed to rotate keys: %v", err)
+			r.logger.Errorf("failed to rotate keys: %v", err)
 		}
 	}
 
@@ -124,26 +128,27 @@ func (s *Signer) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Second * 30):
-				if err := s.rotate(); err != nil {
-					s.logger.Errorf("failed to rotate keys: %v", err)
+				if err := r.rotate(); err != nil {
+					r.logger.Errorf("failed to rotate keys: %v", err)
 				}
 			}
 		}
 	}()
 }
 
-func (s *Signer) rotate() error {
-	keys, err := s.storage.GetKeys()
+func (r *RotatingSigner) rotate() error {
+	keys, err := r.storage.GetKeys()
 	if err != nil && err != ErrNotFound {
 		return fmt.Errorf("get keys: %v", err)
 	}
-	if s.now().Before(keys.NextRotation) {
+	r.signer = newStaticFromKeys(keys)
+	if r.now().Before(keys.NextRotation) {
 		return nil
 	}
-	s.logger.Infof("keys expired, rotating")
+	r.logger.Infof("keys expired, rotating")
 
 	// Generate the key outside of a storage transaction.
-	key, err := s.strategy.key()
+	key, err := r.strategy.key()
 	if err != nil {
 		return fmt.Errorf("generate key: %v", err)
 	}
@@ -166,8 +171,8 @@ func (s *Signer) rotate() error {
 	}
 
 	var nextRotation time.Time
-	err = s.storage.UpdateKeys(func(keys Keys) (Keys, error) {
-		tNow := s.now()
+	err = r.storage.UpdateKeys(func(keys Keys) (Keys, error) {
+		tNow := r.now()
 
 		// if you are running multiple instances of dex, another instance
 		// could have already rotated the keys.
@@ -198,12 +203,12 @@ func (s *Signer) rotate() error {
 				// the amount of time an ID Token is valid for. This ensures the
 				// verification key won't expire until all ID Tokens it's signed
 				// expired as well.
-				Expiry: tNow.Add(s.strategy.idTokenValidFor),
+				Expiry: tNow.Add(r.strategy.idTokenValidFor),
 			}
 			keys.VerificationKeys = append(keys.VerificationKeys, verificationKey)
 		}
 
-		nextRotation = s.now().Add(s.strategy.rotationFrequency)
+		nextRotation = r.now().Add(r.strategy.rotationFrequency)
 		keys.SigningKey = priv
 		keys.SigningKeyPub = pub
 		keys.NextRotation = nextRotation
@@ -212,6 +217,64 @@ func (s *Signer) rotate() error {
 	if err != nil {
 		return err
 	}
-	s.logger.Infof("keys rotated, next rotation: %s", nextRotation)
+
+	// Update post rotation
+	keys, err = r.storage.GetKeys()
+	if err != nil && err != ErrNotFound {
+		return fmt.Errorf("get keys: %v", err)
+	}
+	r.signer = newStaticFromKeys(keys)
+
+	r.logger.Infof("keys rotated, next rotation: %s", nextRotation)
 	return nil
+}
+
+// PublicKeys returns a keyset of all valid signer public keys considered
+// valid for signed tokens
+func (r *RotatingSigner) PublicKeys() (*jose.JSONWebKeySet, error) {
+	if r.signer == nil {
+		return nil, errors.New("Signer not initialized")
+	}
+	return r.signer.PublicKeys()
+}
+
+// SignerAlg returns the algorithm the signer uses
+func (r *RotatingSigner) SignerAlg() (jose.SignatureAlgorithm, error) {
+	if r.signer == nil {
+		return jose.SignatureAlgorithm(""), errors.New("Signer not initialized")
+	}
+	return r.signer.SignerAlg()
+}
+
+// Sign the provided data
+func (r *RotatingSigner) Sign(data []byte) (signed []byte, err error) {
+	if r.signer == nil {
+		return nil, errors.New("Signer not initialized")
+	}
+	return r.signer.Sign(data)
+}
+
+// VerifySignature verifies the signature given token against the current signers
+func (r *RotatingSigner) VerifySignature(ctx context.Context, jwt string) (payload []byte, err error) {
+	if r.signer == nil {
+		return nil, errors.New("Signer not initialized")
+	}
+	return r.signer.VerifySignature(ctx, jwt)
+}
+
+func newStaticFromKeys(k Keys) *StaticSigner {
+	if k.SigningKey == nil {
+		return nil
+	}
+	vks := []jose.JSONWebKey{}
+	if k.SigningKeyPub != nil {
+		vks = append(vks, *k.SigningKeyPub)
+	}
+	for _, k := range k.VerificationKeys {
+		vks = append(vks, *k.PublicKey)
+	}
+	return NewStatic(
+		jose.SigningKey{Algorithm: jose.RS256, Key: k.SigningKey.Key},
+		vks,
+	)
 }

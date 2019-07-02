@@ -3,9 +3,9 @@ package signer
 import (
 	"os"
 	"sort"
+	"sync"
 	"testing"
 	"time"
-	"sync"
 
 	"github.com/sirupsen/logrus"
 )
@@ -71,7 +71,7 @@ func TestKeyRotater(t *testing.T) {
 		Level:     logrus.DebugLevel,
 	}
 
-	r := &Signer{
+	r := &RotatingSigner{
 		storage:  newMemoryStore(),
 		strategy: DefaultRotationStrategy(rotationFrequency, validFor),
 		now:      func() time.Time { return now },
@@ -99,14 +99,13 @@ func TestKeyRotater(t *testing.T) {
 	}
 }
 
-
 // New returns an in memory
 func newMemoryStore() Storage {
-	return &memStorage{	}
+	return &memStorage{}
 }
 
 type memStorage struct {
-	mu sync.Mutex
+	mu   sync.Mutex
 	keys Keys
 }
 
@@ -116,12 +115,10 @@ func (s *memStorage) tx(f func()) {
 	f()
 }
 
-
 func (s *memStorage) GetKeys() (keys Keys, err error) {
 	s.tx(func() { keys = s.keys })
 	return
 }
-
 
 func (s *memStorage) UpdateKeys(updater func(old Keys) (Keys, error)) (err error) {
 	s.tx(func() {
