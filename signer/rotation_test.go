@@ -11,9 +11,9 @@ import (
 
 	storagepb "github.com/heroku/deci/proto/deci/storage/v1beta1"
 	"github.com/heroku/deci/storage"
+	"github.com/heroku/deci/storage/disk"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/square/go-jose.v2"
-	"github.com/heroku/deci/storage/disk"
 )
 
 func signingKeyID(t *testing.T, s storage.Storage) string {
