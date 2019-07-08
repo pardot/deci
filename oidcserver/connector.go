@@ -36,15 +36,6 @@ type Identity struct {
 	ConnectorData []byte
 }
 
-// PasswordConnector is an interface implemented by connectors which take a
-// username and password.
-// Prompt() is used to inform the handler what to display in the password
-// template. If this returns an empty string, it'll default to "Username".
-type PasswordConnector interface {
-	Prompt() string
-	Login(ctx context.Context, s Scopes, username, password string) (identity Identity, validPassword bool, err error)
-}
-
 // CallbackConnector is an interface implemented by connectors which use an OAuth
 // style redirect flow to determine user information.
 type CallbackConnector interface {
@@ -65,28 +56,6 @@ type CallbackConnector interface {
 
 	// Handle the callback to the server and return an identity.
 	HandleCallback(s Scopes, r *http.Request) (identity Identity, err error)
-}
-
-// SAMLConnector represents SAML connectors which implement the HTTP POST binding.
-//  RelayState is handled by the server.
-//
-// See: https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf
-// "3.5 HTTP POST Binding"
-type SAMLConnector interface {
-	// POSTData returns an encoded SAML request and SSO URL for the server to
-	// render a POST form with.
-	//
-	// POSTData should encode the provided request ID in the returned serialized
-	// SAML request.
-	POSTData(s Scopes, requestID string) (ssoURL, samlRequest string, err error)
-
-	// HandlePOST decodes, verifies, and maps attributes from the SAML response.
-	// It passes the expected value of the "InResponseTo" response field, which
-	// the connector must ensure matches the response value.
-	//
-	// See: https://www.oasis-open.org/committees/download.php/35711/sstc-saml-core-errata-2.0-wd-06-diff.pdf
-	// "3.2.2 Complex Type StatusResponseType"
-	HandlePOST(s Scopes, samlResponse, inResponseTo string) (identity Identity, err error)
 }
 
 // RefreshConnector is a connector that can update the client claims.

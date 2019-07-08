@@ -28,9 +28,6 @@ func NewCallbackConnector(logger logrus.FieldLogger) Connector {
 var (
 	_ CallbackConnector = &Callback{}
 	_ RefreshConnector  = &Callback{}
-
-	_ PasswordConnector = passwordConnector{}
-	_ RefreshConnector  = passwordConnector{}
 )
 
 // Callback is a connector that requires no user interaction and always returns the same identity.
@@ -62,29 +59,4 @@ func (m *Callback) HandleCallback(s Scopes, r *http.Request) (Identity, error) {
 // Refresh updates the identity during a refresh token request.
 func (m *Callback) Refresh(ctx context.Context, s Scopes, identity Identity) (Identity, error) {
 	return m.Identity, nil
-}
-
-type passwordConnector struct {
-	username string
-	password string
-}
-
-func (p passwordConnector) Close() error { return nil }
-
-func (p passwordConnector) Login(ctx context.Context, s Scopes, username, password string) (identity Identity, validPassword bool, err error) {
-	if username == p.username && password == p.password {
-		return Identity{
-			UserID:        "0-385-28089-0",
-			Username:      "Kilgore Trout",
-			Email:         "kilgore@kilgore.trout",
-			EmailVerified: true,
-		}, true, nil
-	}
-	return identity, false, nil
-}
-
-func (p passwordConnector) Prompt() string { return "" }
-
-func (p passwordConnector) Refresh(_ context.Context, _ Scopes, identity Identity) (Identity, error) {
-	return identity, nil
 }

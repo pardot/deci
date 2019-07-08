@@ -188,7 +188,7 @@ func (s *Server) handleConnectorLogin(w http.ResponseWriter, r *http.Request) {
 	// Set the connector being used for the login.
 	if authReq.ConnectorId != connID {
 		authReq.ConnectorId = connID
-		authReqVers, err = s.storage.Put(r.Context(), authReqKeyspace, authReqID, authReqVers, authReq)
+		_, err = s.storage.Put(r.Context(), authReqKeyspace, authReqID, authReqVers, authReq)
 		if err != nil {
 			s.logger.Errorf("Failed to set connector ID on auth request: %v", err)
 			s.renderError(w, http.StatusInternalServerError, "Database error.")
@@ -197,7 +197,6 @@ func (s *Server) handleConnectorLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scopes := parseScopes(authReq.Scopes)
-	showBacklink := len(s.connectors) > 1
 
 	switch r.Method {
 	case http.MethodGet:
@@ -213,68 +212,9 @@ func (s *Server) handleConnectorLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			http.Redirect(w, r, callbackURL, http.StatusFound)
-		case PasswordConnector:
-			if err := s.templates.password(w, r.URL.String(), "", usernamePrompt(conn), false, showBacklink); err != nil {
-				s.logger.Errorf("Server template error: %v", err)
-			}
-		case SAMLConnector:
-			action, value, err := conn.POSTData(scopes, authReqID)
-			if err != nil {
-				s.logger.Errorf("Creating SAML data: %v", err)
-				s.renderError(w, http.StatusInternalServerError, "Connector Login Error")
-				return
-			}
-
-			// TODO(ericchiang): Don't inline this.
-			fmt.Fprintf(w, `<!DOCTYPE html>
-			  <html lang="en">
-			  <head>
-			    <meta http-equiv="content-type" content="text/html; charset=utf-8">
-			    <title>SAML login</title>
-			  </head>
-			  <body>
-			    <form method="post" action="%s" >
-				    <input type="hidden" name="SAMLRequest" value="%s" />
-				    <input type="hidden" name="RelayState" value="%s" />
-			    </form>
-				<script>
-				    document.forms[0].submit();
-				</script>
-			  </body>
-			  </html>`, action, value, authReqID)
 		default:
 			s.renderError(w, http.StatusBadRequest, "Requested resource does not exist.")
 		}
-	case http.MethodPost:
-		passwordConnector, ok := conn.(PasswordConnector)
-		if !ok {
-			s.renderError(w, http.StatusBadRequest, "Requested resource does not exist.")
-			return
-		}
-
-		username := r.FormValue("login")
-		password := r.FormValue("password")
-
-		identity, ok, err := passwordConnector.Login(r.Context(), scopes, username, password)
-		if err != nil {
-			s.logger.Errorf("Failed to login user: %v", err)
-			s.renderError(w, http.StatusInternalServerError, "Login error.")
-			return
-		}
-		if !ok {
-			if err := s.templates.password(w, r.URL.String(), username, usernamePrompt(passwordConnector), true, showBacklink); err != nil {
-				s.logger.Errorf("Server template error: %v", err)
-			}
-			return
-		}
-		redirectURL, err := s.finalizeLogin(r.Context(), identity, authReq, authReqVers)
-		if err != nil {
-			s.logger.Errorf("Failed to finalize login: %v", err)
-			s.renderError(w, http.StatusInternalServerError, "Login error.")
-			return
-		}
-
-		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 	default:
 		s.renderError(w, http.StatusBadRequest, "Unsupported request method.")
 	}
@@ -333,13 +273,6 @@ func (s *Server) handleConnectorCallback(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		identity, err = conn.HandleCallback(parseScopes(authReq.Scopes), r)
-	case SAMLConnector:
-		if r.Method != http.MethodPost {
-			s.logger.Errorf("OAuth2 request mapped to SAML connector")
-			s.renderError(w, http.StatusBadRequest, "Invalid request")
-			return
-		}
-		identity, err = conn.HandlePOST(parseScopes(authReq.Scopes), r.PostFormValue("SAMLResponse"), authReq.Id)
 	default:
 		s.renderError(w, http.StatusInternalServerError, "Requested resource does not exist.")
 		return
@@ -1048,14 +981,6 @@ func (s *Server) tokenErrHelper(w http.ResponseWriter, typ string, description s
 	if err := tokenErr(w, typ, description, statusCode); err != nil {
 		s.logger.Errorf("token error response: %v", err)
 	}
-}
-
-// Check for username prompt override from connector. Defaults to "Username".
-func usernamePrompt(conn PasswordConnector) string {
-	if attr := conn.Prompt(); attr != "" {
-		return attr
-	}
-	return "Username"
 }
 
 func offlineSessionID(userID, connID string) string {
