@@ -5,12 +5,6 @@ import (
 	"net/http"
 )
 
-// Connector is a mechanism for federating login to a remote identity service.
-//
-// Implementations are expected to implement either the PasswordConnector or
-// CallbackConnector interface.
-type Connector interface{}
-
 // Scopes represents additional data requested by the clients about the end user.
 type Scopes struct {
 	// The client has requested a refresh token from the server.
@@ -36,26 +30,38 @@ type Identity struct {
 	ConnectorData []byte
 }
 
-// CallbackConnector is an interface implemented by connectors which use an OAuth
-// style redirect flow to determine user information.
-type CallbackConnector interface {
-	// The initial URL to redirect the user to.
-	//
-	// OAuth2 implementations should request different scopes from the upstream
-	// identity provider based on the scopes requested by the downstream client.
-	// For example, if the downstream client requests a refresh token from the
-	// server, the connector should also request a token from the provider.
-	//
-	// Many identity providers have arbitrary restrictions on refresh tokens. For
-	// example Google only allows a single refresh token per client/user/scopes
-	// combination, and wont return a refresh token even if offline access is
-	// requested if one has already been issues. There's no good general answer
-	// for these kind of restrictions, and may require this package to become more
-	// aware of the global set of user/connector interactions.
-	LoginURL(s Scopes, callbackURL, state string) (string, error)
+// Authenticator can be used by connectors to access metadata about the identity
+// backend, and to mark an authentication flow as successful.
+type Authenticator interface {
+	// Authenticate should be called on a successful authentication flow to set
+	// the desired identity for the flow ID. The user should then be redirected
+	// to returned URL to complete the flow
+	Authenticate(ctx context.Context, authID string, ident Identity) (returnURL string, err error)
+}
 
-	// Handle the callback to the server and return an identity.
-	HandleCallback(s Scopes, r *http.Request) (identity Identity, err error)
+// LoginRequest encapsulates the information passed in for this SSO request.
+type LoginRequest struct {
+	// AuthID is the unique identifier for this access request. It is assigned
+	// at login request, and is needed to finalize the flow.
+	AuthID string
+	// Scopes are the Oauth2 Scopes for OIDC requests.
+	Scopes Scopes
+}
+
+// Connector is used to actually manage the end user authentication
+type Connector interface {
+	// Initialize will be called before the connectors first authentication
+	// flow. This passes ann Authenticator which the connector can use to assign
+	// an identity to the authorization flow, and determine the final URL to
+	// send the user to
+	Initialize(auth Authenticator) error
+	// LoginPage is called at the start of an authentication flow. This method
+	// can render/return whatever it wants and run the user through any
+	// arbitrary intermediate pages. The only requirement is that it threads the
+	// AuthID through these, and at the end of the connector flow it needs to
+	// pass this to the Authenticator's Authenticate method, and redirect the
+	// user to the resulting URL.
+	LoginPage(w http.ResponseWriter, r *http.Request, lr LoginRequest)
 }
 
 // RefreshConnector is a connector that can update the client claims.
