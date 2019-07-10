@@ -101,6 +101,7 @@ func (s *Storage) putWithOptionalExpiry(ctx context.Context, keyspace, key, vers
 		b, err := tx.CreateBucketIfNotExists([]byte(keyspace))
 		var existing bool
 		var existvers int64
+		newExp := expires
 
 		if err != nil {
 			return err
@@ -116,6 +117,9 @@ func (s *Storage) putWithOptionalExpiry(ctx context.Context, keyspace, key, vers
 			if r.Expires == nil || r.Expires.Before(s.now()) {
 				existing = true
 				existvers = r.Version
+				if newExp == nil {
+					newExp = r.Expires
+				}
 			}
 		}
 
@@ -144,7 +148,7 @@ func (s *Storage) putWithOptionalExpiry(ctx context.Context, keyspace, key, vers
 		r := &record{
 			Version: nvers,
 			Data:    pb,
-			Expires: expires,
+			Expires: newExp,
 		}
 		rb, err := r.encode()
 		if err != nil {
