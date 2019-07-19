@@ -29,7 +29,7 @@ func testNonexistingGet(ctx context.Context, t *testing.T, s Storage) {
 func testSetGet(ctx context.Context, t *testing.T, s Storage) {
 	h := "hello world"
 
-	_, err := s.Put(ctx, "testSetGet", "setget", "", &jpbpb.Simple{OString: &h})
+	_, err := s.Put(ctx, "testSetGet", "setget", 0, &jpbpb.Simple{OString: &h})
 	if err != nil {
 		t.Fatalf("Want: no error, got %v", err)
 	}
@@ -46,7 +46,7 @@ func testSetGet(ctx context.Context, t *testing.T, s Storage) {
 func testVersioning(ctx context.Context, t *testing.T, s Storage) {
 	msg := &jpbpb.Simple{}
 
-	_, err := s.Put(ctx, "testVersioning", "vers", "", msg)
+	_, err := s.Put(ctx, "testVersioning", "vers", 0, msg)
 	if err != nil {
 		t.Fatalf("Want: no error, got %v", err)
 	}
@@ -56,7 +56,7 @@ func testVersioning(ctx context.Context, t *testing.T, s Storage) {
 		t.Fatalf("Want: no error, got %v", err)
 	}
 
-	_, err = s.Put(ctx, "testVersioning", "vers", "", msg)
+	_, err = s.Put(ctx, "testVersioning", "vers", 0, msg)
 	if !IsConflictErr(err) {
 		t.Errorf("Want: conflict error, got %v", err)
 	}
@@ -68,7 +68,7 @@ func testVersioning(ctx context.Context, t *testing.T, s Storage) {
 }
 
 func testExpiry(ctx context.Context, t *testing.T, s Storage) {
-	_, err := s.PutWithExpiry(ctx, "testExpiry", "exp", "", &jpbpb.Simple{}, time.Now().Add(1*time.Second))
+	_, err := s.PutWithExpiry(ctx, "testExpiry", "exp", 0, &jpbpb.Simple{}, time.Now().Add(1*time.Second))
 	if err != nil {
 		t.Fatalf("Want: no error, got %v", err)
 	}
@@ -89,7 +89,7 @@ func testExpiry(ctx context.Context, t *testing.T, s Storage) {
 
 func testList(ctx context.Context, t *testing.T, s Storage) {
 	for i := 0; i < 10; i++ {
-		if _, err := s.Put(ctx, "testList", fmt.Sprintf("item-%d", i), "", &jpbpb.Simple{}); err != nil {
+		if _, err := s.Put(ctx, "testList", fmt.Sprintf("item-%d", i), 0, &jpbpb.Simple{}); err != nil {
 			t.Fatal(err)
 		}
 	}
