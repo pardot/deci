@@ -12,7 +12,7 @@ import (
 func Test(ctx context.Context, t *testing.T, s Storage) {
 	// Subtests must either clean up after themselves or use a unique keyspace
 	t.Run("testNonexistingGet", func(t *testing.T) { testNonexistingGet(ctx, t, s) })
-	t.Run("testSetGet", func(t *testing.T) { testSetGet(ctx, t, s) })
+	t.Run("testSetGetDelete", func(t *testing.T) { testSetGetDelete(ctx, t, s) })
 	t.Run("testVersioning", func(t *testing.T) { testVersioning(ctx, t, s) })
 	t.Run("testExpiry", func(t *testing.T) { testExpiry(ctx, t, s) })
 	t.Run("testList", func(t *testing.T) { testList(ctx, t, s) })
@@ -26,44 +26,61 @@ func testNonexistingGet(ctx context.Context, t *testing.T, s Storage) {
 	}
 }
 
-func testSetGet(ctx context.Context, t *testing.T, s Storage) {
+func testSetGetDelete(ctx context.Context, t *testing.T, s Storage) {
 	h := "hello world"
 
-	_, err := s.Put(ctx, "testSetGet", "setget", 0, &jpbpb.Simple{OString: &h})
-	if err != nil {
+	if _, err := s.Put(ctx, "testSetGetDelete", "setget", 0, &jpbpb.Simple{OString: &h}); err != nil {
 		t.Fatalf("Want: no error, got %v", err)
 	}
 
 	msg := new(jpbpb.Simple)
-	_, err = s.Get(ctx, "testSetGet", "setget", msg)
+	_, err := s.Get(ctx, "testSetGetDelete", "setget", msg)
 	if err != nil {
 		t.Fatalf("Want: no error, got %v", err)
 	} else if msg.OString == nil || *msg.OString != h {
 		t.Errorf("want: %s got: %v", h, msg.OString)
 	}
+
+	if err := s.Delete(ctx, "testSetGetDelete", "setget"); err != nil {
+		t.Fatalf("Want: no error, got %v", err)
+	}
+
+	_, err = s.Get(ctx, "testSetGetDelete", "setget", msg)
+	if !IsNotFoundErr(err) {
+		t.Fatalf("Want: NotFoundError, got %v", err)
+	}
 }
 
 func testVersioning(ctx context.Context, t *testing.T, s Storage) {
-	msg := &jpbpb.Simple{}
+	ver1 := "version1"
+	ver2 := "version2"
 
-	_, err := s.Put(ctx, "testVersioning", "vers", 0, msg)
+	_, err := s.Put(ctx, "testVersioning", "vers", 0, &jpbpb.Simple{OString: &ver1})
 	if err != nil {
 		t.Fatalf("Want: no error, got %v", err)
 	}
 
+	msg := new(jpbpb.Simple)
 	vers, err := s.Get(ctx, "testVersioning", "vers", msg)
 	if err != nil {
 		t.Fatalf("Want: no error, got %v", err)
 	}
 
-	_, err = s.Put(ctx, "testVersioning", "vers", 0, msg)
+	_, err = s.Put(ctx, "testVersioning", "vers", 0, &jpbpb.Simple{OString: &ver2})
 	if !IsConflictErr(err) {
 		t.Errorf("Want: conflict error, got %v", err)
 	}
 
-	_, err = s.Put(ctx, "testVersioning", "vers", vers, msg)
+	_, err = s.Put(ctx, "testVersioning", "vers", vers, &jpbpb.Simple{OString: &ver2})
 	if err != nil {
 		t.Fatalf("Want: no error, got %v", err)
+	}
+
+	_, err = s.Get(ctx, "testVersioning", "vers", msg)
+	if err != nil {
+		t.Fatalf("Want: no error, got %v", err)
+	} else if *msg.OString != ver2 {
+		t.Fatalf("Want: %s, got %s", ver2, *msg.OString)
 	}
 }
 
@@ -84,6 +101,11 @@ func testExpiry(ctx context.Context, t *testing.T, s Storage) {
 	_, err = s.Get(ctx, "testExpiry", "exp", msg)
 	if !IsNotFoundErr(err) {
 		t.Errorf("Want: not found error, got %v", err)
+	}
+
+	_, err = s.Put(ctx, "testExpiry", "exp2", 0, &jpbpb.Simple{})
+	if err != nil {
+		t.Fatalf("Want: no error, got %v", err)
 	}
 }
 

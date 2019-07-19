@@ -15,7 +15,7 @@ type Storage interface {
 	// updates to the returned object
 	Get(ctx context.Context, keyspace, key string, into proto.Message) (version int64, err error)
 	// Put stores the provided item. If this is an update to an existing object
-	// it's version should be included, for new objects the version should be 0. If
+	// it's version should be included; for new objects the version should be 0. If
 	// the update fails because of a version conflict, an IsConflictErr will be
 	// returned. Any existing expiration set on the object should be preserved.
 	Put(ctx context.Context, keyspace, key string, version int64, obj proto.Message) (newVersion int64, err error)
