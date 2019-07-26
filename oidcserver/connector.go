@@ -48,9 +48,6 @@ type Connector interface {
 	// pass this to the Authenticator's Authenticate method, and redirect the
 	// user to the resulting URL.
 	LoginPage(w http.ResponseWriter, r *http.Request, lr LoginRequest)
-	// ServeHTTP is called for any other requests routed to /connector/{id}. The
-	// prefix will be stripped from r.URL.Path.
-	ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
 // RefreshConnector is a connector that can update the client claims.

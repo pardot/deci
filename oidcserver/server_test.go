@@ -121,7 +121,7 @@ func newTestServer(_ context.Context, t *testing.T, updateServer func(s *Server)
 		t.Fatal(err)
 	}
 
-	if err := server.AddConnector("mock", newMockConnector(server)); err != nil {
+	if err := server.AddConnector("mock", newMockConnector(server.Authenticator())); err != nil {
 		t.Fatal(err)
 	}
 

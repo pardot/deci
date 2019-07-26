@@ -27,7 +27,7 @@ func main() {
 	l := logrus.New()
 
 	var (
-		issuer = kingpin.Flag("issuer", "Issuer URL to serve as").Default("http://127.0.0.1:5556/dex").URL()
+		issuer = kingpin.Flag("issuer", "Issuer URL to serve as").Default("http://localhost:5556/dex").URL()
 		dbURL  = kingpin.Flag("db", "URL to Postgres database").Default("postgres://localhost/deci_dev?sslmode=disable").String()
 		listen = kingpin.Flag("listen", "Addr to listen on").Default("127.0.0.1:5556").String()
 
@@ -35,7 +35,6 @@ func main() {
 		oidcIssuer       = kingpin.Flag("oidc-issuer", "Upstream OIDC issuer URL").URL()
 		oidcClientID     = kingpin.Flag("oidc-client-id", "OIDC Client ID").String()
 		oidcClientSecret = kingpin.Flag("oidc-client-secret", "OIDC Client Secret").String()
-		oidcRedirectURL  = kingpin.Flag("oidc-redirect-url", "OIDC Redirect URL").Default("http://127.0.0.1:5556/dex/connector/oidc/callback").String()
 	)
 	kingpin.Parse()
 
@@ -68,6 +67,9 @@ func main() {
 		l.WithError(err).Fatal("Failed to construct server")
 	}
 
+	mux := http.NewServeMux()
+	mux.Handle((*issuer).Path+"/", http.StripPrefix((*issuer).Path, server))
+
 	if err := server.AddConnector("static", &staticIdentityConnector{
 		identity: oidcserver.Identity{
 			UserID:        "jdoe",
@@ -76,7 +78,7 @@ func main() {
 			EmailVerified: true,
 			Groups:        []string{"group"},
 		},
-		authenticator: server,
+		authenticator: server.Authenticator(),
 	}); err != nil {
 		l.WithError(err).Fatal("Failed to add static connector")
 	}
@@ -91,21 +93,22 @@ func main() {
 			ClientID:     *oidcClientID,
 			ClientSecret: *oidcClientSecret,
 			Endpoint:     provider.Endpoint(),
-			RedirectURL:  *oidcRedirectURL,
+			RedirectURL:  (*issuer).String() + "/oidc/callback",
 			Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 		}
 
-		if err := server.AddConnector("oidc", &oidcConnector{
+		connector := &oidcConnector{
 			provider:      provider,
 			oauth2Config:  oauth2Config,
-			authenticator: server,
-		}); err != nil {
+			authenticator: server.Authenticator(),
+		}
+
+		if err := server.AddConnector("oidc", connector); err != nil {
 			l.WithError(err).Fatal("Failed to add OIDC connector")
 		}
-	}
 
-	mux := http.NewServeMux()
-	mux.Handle((*issuer).Path+"/", http.StripPrefix((*issuer).Path, server))
+		mux.Handle((*issuer).Path+"/oidc/", http.StripPrefix((*issuer).Path+"/oidc", connector))
+	}
 
 	l.Infof("Listening on %s", *listen)
 	l.WithError(http.ListenAndServe(*listen, mux)).Fatal()
@@ -125,10 +128,6 @@ func (s *staticIdentityConnector) LoginPage(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	http.Redirect(w, r, ret, http.StatusSeeOther)
-}
-
-func (s *staticIdentityConnector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	_, _ = w.Write([]byte("Hello from simpleConnector"))
 }
 
 // Refresh updates the identity during a refresh token request.

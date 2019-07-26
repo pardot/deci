@@ -298,26 +298,23 @@ func New(issuer string, storage storage.Storage, signer Signer, clients ClientSo
 	return s, nil
 }
 
+// Authenticator returns an Authenticator associated with this Server.
+// Connectors should call Authenticate on the returned Authenticator to finalize
+// the login flow.
+func (s *Server) Authenticator() Authenticator {
+	return &authenticator{s: s}
+}
+
 // AddConnector registers the connector with the server. AddConnector must not
 // be called after the Server begins handling HTTP requests.
 func (s *Server) AddConnector(id string, connector Connector) error {
 	s.connectors[id] = connector
-
-	prefix := path.Join("/connector", id)
-	s.mux.PathPrefix(prefix).Handler(http.StripPrefix(prefix, connector))
 
 	return nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
-}
-
-// ConnectorURL returns the base URL under which all requests will be forwarded
-// to given connector. The path prefix will be stripped before the request is
-// forwarded to the connector's ServeHTTP method.
-func (s *Server) ConnectorURL(id string) string {
-	return s.absURL("/connector", id)
 }
 
 func (s *Server) absPath(pathItems ...string) string {

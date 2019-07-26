@@ -8,16 +8,21 @@ import (
 )
 
 // Authenticator is capable of associating the user's identity with a given
-// authID, then returning the final redirect URL.
-//
-// Server implements Authenticator.
+// authID, then returning the final redirect URL. This is the primary way a
+// Connector calls back to Server to finalize the flow.
 type Authenticator interface {
 	// Authenticate associates the user's identity with the given authID, then
 	// returns final redirect URL.
 	Authenticate(ctx context.Context, authID string, ident Identity) (returnURL string, err error)
 }
 
-func (s *Server) Authenticate(ctx context.Context, authID string, ident Identity) (returnURL string, err error) {
+// authenticator is a thin wrapper for the main Server type, to avoid exposing
+// the Authenticate method on server's public type.
+type authenticator struct {
+	s *Server
+}
+
+func (a *authenticator) Authenticate(ctx context.Context, authID string, ident Identity) (returnURL string, err error) {
 	claims := &storagepb.Claims{
 		UserId:        ident.UserID,
 		Username:      ident.Username,
@@ -27,7 +32,7 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident Identity
 	}
 
 	authReq := &storagepb.AuthRequest{}
-	authReqVers, err := s.storage.Get(ctx, authReqKeyspace, authID, authReq)
+	authReqVers, err := a.s.storage.Get(ctx, authReqKeyspace, authID, authReq)
 	if err != nil {
 		return "", err
 	}
@@ -36,7 +41,7 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident Identity
 	authReq.Claims = claims
 	authReq.ConnectorData = ident.ConnectorData
 
-	if _, err := s.storage.Put(ctx, authReqKeyspace, authReq.Id, authReqVers, authReq); err != nil {
+	if _, err := a.s.storage.Put(ctx, authReqKeyspace, authReq.Id, authReqVers, authReq); err != nil {
 		return "", fmt.Errorf("failed to update auth request: %v", err)
 	}
 
@@ -45,8 +50,8 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident Identity
 		email = email + " (unverified)"
 	}
 
-	s.logger.Infof("login successful: connector %q, username=%q, email=%q, groups=%q",
+	a.s.logger.Infof("login successful: connector %q, username=%q, email=%q, groups=%q",
 		authReq.ConnectorId, claims.Username, email, claims.Groups)
 
-	return s.absURL("/approval") + "?req=" + authReq.Id, nil
+	return a.s.absURL("/approval") + "?req=" + authReq.Id, nil
 }
