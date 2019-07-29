@@ -219,7 +219,7 @@ func New(issuer string, storage storage.Storage, signer Signer, clients ClientSo
 		connectors:             make(map[string]Connector),
 		storage:                storage,
 		idTokensValidFor:       24 * time.Hour,
-		authRequestsValidFor:   24 * time.Hour,
+		authRequestsValidFor:   1 * time.Hour,
 		now:                    time.Now,
 		logger:                 logger,
 		registry:               reg,
