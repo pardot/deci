@@ -14,7 +14,7 @@ jobs:
       id: go
 
     - name: Check out code into the Go module directory
-      use: actions/checkout@master
+      uses: actions/checkout@master
       path: ${{ go.module-path }}
 
     - name: Get dependencies
@@ -29,7 +29,7 @@ jobs:
     - name: Build
       working-directory: ${{ go.module-path }}
       run: go build -v ./...
-      
+
     - name: Test
       working-directory: ${{ go.module-path }}
       run: go test -v ./...
