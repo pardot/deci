@@ -1,0 +1,1 @@
+web: deci-simple
