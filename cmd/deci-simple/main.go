@@ -65,6 +65,14 @@ func main() {
 			Secret:       "ZXhhbXBsZS1hcHAtc2VjcmV0",
 			RedirectURIs: []string{"http://127.0.0.1:5555/callback"},
 		},
+		{
+			ID:     "openid-certification",
+			Secret: "openid-certification",
+			RedirectURIs: []string{
+				"https://op.certification.openid.net:61944/authz_cb",
+				"https://op.certification.openid.net:61944/authz_post",
+			},
+		},
 	})
 
 	server, err := oidcserver.New((*issuer).String(), stor, signer, clients, oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(*skipConsent))
