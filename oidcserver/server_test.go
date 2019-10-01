@@ -227,8 +227,8 @@ func TestOAuth2CodeFlow(t *testing.T) {
 				if err != nil {
 					return fmt.Errorf("failed to fetch userinfo: %v", err)
 				}
-				if conn.Identity.Email != ui.Email {
-					return fmt.Errorf("expected email to be %v, got %v", conn.Identity.Email, ui.Email)
+				if conn.authFunc(LoginRequest{}).Email != ui.Email {
+					return fmt.Errorf("expected email to be %v, got %v", conn.authFunc(LoginRequest{}).Email, ui.Email)
 				}
 				return nil
 			},
@@ -411,7 +411,9 @@ func TestOAuth2CodeFlow(t *testing.T) {
 					EmailVerified: true,
 					Groups:        []string{"foo", "bar"},
 				}
-				conn.Identity = ident
+				conn.refreshFunc = func(_ Identity) Identity {
+					return ident
+				}
 
 				type claims struct {
 					Username      string   `json:"name"`
@@ -534,7 +536,7 @@ func TestOAuth2CodeFlow(t *testing.T) {
 			mockConn := s.connectors["mock"]
 			conn = mockConn.(*mockConnector)
 			if tc.preAuthenticate != nil {
-				conn.preAuthenticate = func(lr LoginRequest) Identity {
+				conn.authFunc = func(lr LoginRequest) Identity {
 					t.Log("preauth called")
 					ident := tc.preAuthenticate(t, lr)
 					t.Logf("returning %#v", ident)
