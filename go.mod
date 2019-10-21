@@ -19,6 +19,7 @@ require (
 	github.com/prometheus/client_golang v0.9.3
 	github.com/sirupsen/logrus v1.4.2
 	go.etcd.io/bbolt v1.3.3
+	golang.org/x/crypto v0.0.0-20190911031432-227b76d455e7
 	golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/square/go-jose.v2 v2.2.2
