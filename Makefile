@@ -19,10 +19,13 @@ oidcserver/oidcserver-packr.go: $(gopath)/bin/gobin oidcserver/web
 	cd oidcserver && gobin -m -run github.com/gobuffalo/packr/v2/packr2 clean
 	cd oidcserver && gobin -m -run github.com/gobuffalo/packr/v2/packr2
 
-proto: proto/deci/storage/v1beta1/storage.pb.go
+proto: proto/deci/storage/v1beta1/storage.pb.go proto/deci/storage/v2beta1/storage.pb.go
 
 proto/deci/storage/v1beta1/storage.pb.go: proto/deci/storage/v1beta1/storage.proto
-	protoc -I proto/deci/storage/v1beta1 --go_out=proto/deci/storage/v1beta1 storage.proto
+	protoc -I proto --go_out=paths=source_relative:proto deci/storage/v1beta1/storage.proto
+
+proto/deci/storage/v2beta1/storage.pb.go: proto/deci/storage/v2beta1/storage.proto
+	protoc -I proto --go_out=paths=source_relative:proto deci/storage/v2beta1/storage.proto
 
 $(gopath)/bin/gobin:
 	(cd /tmp && GO111MODULE=on go get -u github.com/myitcv/gobin@latest)

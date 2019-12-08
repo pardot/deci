@@ -4,7 +4,7 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 
 package deci.storage.v1beta1;
-option go_package = "storage";
+option go_package = "github.com/pardot/deci/proto/deci/storage/v1beta1;storage";
 
 // Keys hold encryption and signing keys.
 message Keys {
