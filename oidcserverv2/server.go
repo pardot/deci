@@ -3,8 +3,11 @@ package oidcserverv2
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -101,6 +104,7 @@ func New(issuer string, storage storage.Storage, signer Signer, connectors map[s
 		Issuer:                issURL.String(),
 		AuthorizationEndpoint: issURL.String() + "/auth",
 		TokenEndpoint:         issURL.String() + "/token",
+		UserinfoEndpoint:      issURL.String() + "/userinfo",
 	}
 
 	disco, err := discovery.NewHandler(md,
@@ -158,6 +162,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		s.mux = http.NewServeMux()
 		s.mux.HandleFunc("/auth", s.authorization)
 		s.mux.HandleFunc("/token", s.token)
+		s.mux.HandleFunc("/userinfo", s.userinfo)
 		s.mux.Handle(
 			"/.well-known/openid-configuration/",
 			http.StripPrefix("/.well-known/openid-configuration", s.discovery),
@@ -172,13 +177,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 //
 // This is passed to the connector and used via "Initialize"
 func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserver.Identity) (returnURL string, err error) {
-	var acr, amr string
+	var acr string
 	if ident.ACR != nil {
 		acr = *ident.ACR
-	}
-	if len(ident.AMR) > 0 {
-		// TODO - core probably needs amr fixed
-		amr = ident.AMR[0]
 	}
 
 	// Stash the data alongside our session
@@ -191,6 +192,8 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 
 	identToSess(ident, sess)
 
+	log.Printf("storing sess AMR: %v", sess.Claims.Amr)
+
 	if _, err := s.sessionMgr.storage.Put(ctx, sessKeyspace, authID, sessVer, sess); err != nil {
 		return "", err
 	}
@@ -198,7 +201,7 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 	auth := &core.Authorization{
 		Scopes: sess.LoginRequest.Scopes,
 		ACR:    acr,
-		AMR:    amr,
+		AMR:    ident.AMR,
 	}
 
 	// upstream handles the redirecting, whereas we expect the URL.
@@ -282,15 +285,17 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 
 		refconn, ok := s.connector.(oidcserver.RefreshConnector)
 
-		allowRefresh := ok && strContains(sess.LoginRequest.Scopes, "offline_access")
+		allowRefresh := ok && tr.RefreshRequested
 
-		if ok && tr.RefreshRequested {
+		if ok && tr.IsRefresh {
 			newID, err := refconn.Refresh(req.Context(), sessToScopes(sess), sessToIdentity(sess))
 			if err != nil {
 				// TODO - how can we make this more graceful if it's for auth
 				// failed reasons.
 				return nil, err
 			}
+
+			log.Printf("refresh req newID: %v", newID)
 
 			identToSess(newID, sess)
 
@@ -300,34 +305,16 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 
-		// build the token based on the info we have
-		submsg := &storagev2beta1.DexSubject{
-			UserId: sess.Claims.UserId,
-			ConnId: s.connectorID,
-		}
-		subpb, err := proto.Marshal(submsg)
+		// claims2tok fills the subject
+		idt := tr.PrefillIDToken(s.issuerURL.String(), "", s.now().Add(s.idTokensValidFor))
+
+		idt, err = s.claims2token(sess.Claims, idt)
 		if err != nil {
 			return nil, err
 		}
-		sub := base64.RawURLEncoding.EncodeToString(subpb)
-
-		idt := tr.PrefillIDToken(s.issuerURL.String(), sub, s.now().Add(s.idTokensValidFor))
-		if sess.Claims.Acr != nil {
-			idt.ACR = sess.Claims.Acr.Value
-		}
-		// TODO - AMR
-		if len(sess.Claims.Groups) > 0 {
-			idt.Extra["groups"] = sess.Claims.Groups
-		}
-		if sess.Claims.Username != "" {
-			idt.Extra["username"] = sess.Claims.Username
-		}
-		if sess.Claims.Email != "" {
-			idt.Extra["email"] = sess.Claims.Email
-		}
 
 		return &core.TokenResponse{
-			AllowRefresh:           allowRefresh,
+			IssueRefreshToken:      allowRefresh,
 			IDToken:                idt,
 			AccessTokenValidUntil:  s.now().Add(s.idTokensValidFor),
 			RefreshTokenValidUntil: s.now().Add(s.refreshValidFor),
@@ -335,6 +322,30 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 	})
 	if err != nil {
 		s.logger.WithError(err).Error("Error in token endpoint")
+	}
+}
+
+func (s *Server) userinfo(w http.ResponseWriter, req *http.Request) {
+	err := s.oidc.Userinfo(w, req, func(w io.Writer, uireq *core.UserinfoRequest) error {
+		sess := &storagev2beta1.Session{}
+		_, err := s.sessionMgr.storage.Get(req.Context(), sessKeyspace, uireq.SessionID, sess)
+		if err != nil {
+			return err
+		}
+
+		tok, err := s.claims2token(sess.Claims, core.IDToken{})
+		if err != nil {
+			return err
+		}
+
+		if err := json.NewEncoder(w).Encode(tok); err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		s.logger.WithError(err).Error("Error in userinfo endpoint")
 	}
 }
 
@@ -394,4 +405,38 @@ func identToSess(ident oidcserver.Identity, sess *storagev2beta1.Session) {
 
 	sess.Claims = claims
 	sess.ConnectorData = ident.ConnectorData
+}
+
+func (s *Server) claims2token(claims *storagev1beta1.Claims, tok core.IDToken) (core.IDToken, error) {
+	if tok.Extra == nil {
+		tok.Extra = map[string]interface{}{}
+	}
+
+	submsg := &storagev2beta1.DexSubject{
+		UserId: claims.UserId,
+		ConnId: s.connectorID,
+	}
+	subpb, err := proto.Marshal(submsg)
+	if err != nil {
+		return core.IDToken{}, err
+	}
+	tok.Subject = base64.RawURLEncoding.EncodeToString(subpb)
+
+	tok.AMR = claims.Amr
+	tok.Extra["email_verified"] = claims.EmailVerified
+
+	if len(claims.Groups) > 0 {
+		tok.Extra["groups"] = claims.Groups
+	}
+	if claims.Username != "" {
+		tok.Extra["name"] = claims.Username
+	}
+	if claims.Email != "" {
+		tok.Extra["email"] = claims.Email
+	}
+	if claims.Acr != nil {
+		tok.ACR = claims.Acr.Value
+	}
+
+	return tok, nil
 }
