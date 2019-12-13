@@ -285,7 +285,7 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 
 		refconn, ok := s.connector.(oidcserver.RefreshConnector)
 
-		allowRefresh := ok && tr.RefreshRequested
+		allowRefresh := ok && tr.SessionRefreshable
 
 		if ok && tr.IsRefresh {
 			newID, err := refconn.Refresh(req.Context(), sessToScopes(sess), sessToIdentity(sess))
