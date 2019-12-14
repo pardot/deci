@@ -118,7 +118,7 @@ func newTestServer(_ context.Context, t *testing.T, updateServer func(s *Server)
 			Use:       "sig",
 		},
 	}
-	connectors := map[string]Connector{"mock": newMockConnector()}
+	connectors := map[string]oidcserver.Connector{"mock": newMockConnector()}
 	signer := signer.NewStatic(signingKey, verificationKeys)
 
 	// make the updater into an option, so we can change the server a bit before

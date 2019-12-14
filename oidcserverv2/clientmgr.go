@@ -10,7 +10,7 @@ import (
 var _ core.ClientSource = (*clientMgr)(nil)
 
 type clientMgr struct {
-	clients ClientSource
+	clients oidcserver.ClientSource
 }
 
 func (c *clientMgr) IsValidClientID(clientID string) (ok bool, err error) {

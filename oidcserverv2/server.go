@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,10 +25,6 @@ import (
 )
 
 var _ oidcserver.Authenticator = (*Server)(nil)
-
-type Signer oidcserver.Signer
-type Connector oidcserver.Connector
-type ClientSource oidcserver.ClientSource
 
 // ServerOption defines optional configuration items for the OIDC server.
 type ServerOption func(s *Server) error
@@ -70,7 +65,7 @@ type Server struct {
 
 	oidc *core.OIDC
 
-	connector   Connector
+	connector   oidcserver.Connector
 	connectorID string
 
 	clients *clientMgr
@@ -87,7 +82,7 @@ type Server struct {
 	now func() time.Time
 }
 
-func New(issuer string, storage storage.Storage, signer Signer, connectors map[string]Connector, clients ClientSource, opts ...ServerOption) (*Server, error) {
+func New(issuer string, storage storage.Storage, signer oidcserver.Signer, connectors map[string]oidcserver.Connector, clients oidcserver.ClientSource, opts ...ServerOption) (*Server, error) {
 	issURL, err := url.Parse(issuer)
 	if err != nil {
 		return nil, fmt.Errorf("server: can't parse issuer URL")
@@ -192,8 +187,6 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 
 	identToSess(ident, sess)
 
-	log.Printf("storing sess AMR: %v", sess.Claims.Amr)
-
 	if _, err := s.sessionMgr.storage.Put(ctx, sessKeyspace, authID, sessVer, sess); err != nil {
 		return "", err
 	}
@@ -294,8 +287,6 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 				// failed reasons.
 				return nil, err
 			}
-
-			log.Printf("refresh req newID: %v", newID)
 
 			identToSess(newID, sess)
 

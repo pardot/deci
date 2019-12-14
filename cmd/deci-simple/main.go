@@ -13,6 +13,7 @@ import (
 	oidc "github.com/coreos/go-oidc"
 	_ "github.com/lib/pq"
 	"github.com/pardot/deci/oidcserver"
+	"github.com/pardot/deci/oidcserverv2"
 	"github.com/pardot/deci/signer"
 	"github.com/pardot/deci/storage"
 	"github.com/pardot/deci/storage/memory"
@@ -37,6 +38,8 @@ func main() {
 		oidcIssuer       = kingpin.Flag("oidc-issuer", "Upstream OIDC issuer URL").URL()
 		oidcClientID     = kingpin.Flag("oidc-client-id", "OIDC Client ID").String()
 		oidcClientSecret = kingpin.Flag("oidc-client-secret", "OIDC Client Secret").String()
+
+		useServerV1 = kingpin.Flag("serverv1", "use the V1 server, rather than V2").Default("false").Bool()
 	)
 	kingpin.Parse()
 
@@ -112,7 +115,16 @@ func main() {
 		mux.Handle((*issuer).Path+"/oidc/", http.StripPrefix((*issuer).Path+"/oidc", connector))
 	}
 
-	server, err := oidcserver.New((*issuer).String(), stor, signer, connectors, clients, oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(*skipConsent))
+	var server http.Handler
+	var err error
+
+	if *useServerV1 {
+		l.Info("Using server v1")
+		server, err = oidcserver.New((*issuer).String(), stor, signer, connectors, clients, oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(*skipConsent))
+	} else {
+		l.Info("Using server v2")
+		server, err = oidcserverv2.New((*issuer).String(), stor, signer, connectors, clients, oidcserverv2.WithLogger(l))
+	}
 	if err != nil {
 		l.WithError(err).Fatal("Failed to construct server")
 	}
