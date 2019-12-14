@@ -719,9 +719,3 @@ var connectorData = []byte("foobar")
 func (m *mockConnector) Refresh(ctx context.Context, s oidcserver.Scopes, identity oidcserver.Identity) (oidcserver.Identity, error) {
 	return m.refreshFunc(identity), nil
 }
-
-type oauth2Client struct {
-	config *oauth2.Config
-	token  *oauth2.Token
-	server *httptest.Server
-}

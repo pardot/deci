@@ -28,7 +28,7 @@ func New() *Storage {
 	}
 }
 
-func (s *Storage) Get(ctx context.Context, keyspace, key string, into proto.Message) (version int64, err error) {
+func (s *Storage) Get(_ context.Context, keyspace, key string, into proto.Message) (version int64, err error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -61,7 +61,7 @@ func (s *Storage) PutWithExpiry(ctx context.Context, keyspace, key string, versi
 	return s.putWithOptionalExpiry(ctx, keyspace, key, version, obj, &expires)
 }
 
-func (s *Storage) putWithOptionalExpiry(ctx context.Context, keyspace, key string, version int64, obj proto.Message, expires *time.Time) (newVersion int64, err error) {
+func (s *Storage) putWithOptionalExpiry(_ context.Context, keyspace, key string, version int64, obj proto.Message, expires *time.Time) (newVersion int64, err error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -96,7 +96,7 @@ func (s *Storage) putWithOptionalExpiry(ctx context.Context, keyspace, key strin
 	return r.Version, nil
 }
 
-func (s *Storage) List(ctx context.Context, keyspace string) (keys []string, err error) {
+func (s *Storage) List(_ context.Context, keyspace string) (keys []string, err error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -117,7 +117,7 @@ func (s *Storage) List(ctx context.Context, keyspace string) (keys []string, err
 	return keys, nil
 }
 
-func (s *Storage) Delete(ctx context.Context, keyspace, key string) error {
+func (s *Storage) Delete(_ context.Context, keyspace, key string) error {
 	s.Lock()
 	defer s.Unlock()
 

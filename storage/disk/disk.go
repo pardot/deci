@@ -93,7 +93,7 @@ func (s *Storage) PutWithExpiry(ctx context.Context, keyspace, key string, versi
 	return s.putWithOptionalExpiry(ctx, keyspace, key, version, obj, &expires)
 }
 
-func (s *Storage) putWithOptionalExpiry(ctx context.Context, keyspace, key string, version int64, obj proto.Message, expires *time.Time) (newVersion int64, err error) {
+func (s *Storage) putWithOptionalExpiry(_ context.Context, keyspace, key string, version int64, obj proto.Message, expires *time.Time) (newVersion int64, err error) {
 	var nvers int64
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(keyspace))

@@ -143,7 +143,7 @@ func (s *staticIdentityConnector) LoginPage(w http.ResponseWriter, r *http.Reque
 }
 
 // Refresh updates the identity during a refresh token request.
-func (s *staticIdentityConnector) Refresh(ctx context.Context, sc oidcserver.Scopes, identity oidcserver.Identity) (oidcserver.Identity, error) {
+func (s *staticIdentityConnector) Refresh(_ context.Context, _ oidcserver.Scopes, _ oidcserver.Identity) (oidcserver.Identity, error) { // nolint:unparam // err is nil, but interface req'd
 	return s.identity, nil
 }
 

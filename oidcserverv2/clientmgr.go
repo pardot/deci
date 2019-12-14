@@ -2,6 +2,7 @@ package oidcserverv2
 
 import (
 	"crypto/subtle"
+
 	"github.com/pardot/deci/oidcserver"
 	"github.com/pardot/oidc/core"
 )
