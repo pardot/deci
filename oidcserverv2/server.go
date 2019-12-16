@@ -172,6 +172,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 //
 // This is passed to the connector and used via "Initialize"
 func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserver.Identity) (returnURL string, err error) {
+	l := s.logger.WithFields(logrus.Fields{
+		"authID": authID,
+		"userID": ident.UserID,
+		"fn":     "Authenticate",
+	})
+	l.Info("Starting Authenticate")
+
 	var acr string
 	if ident.ACR != nil {
 		acr = *ident.ACR
@@ -188,6 +195,7 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 	identToSess(ident, sess)
 
 	if _, err := s.sessionMgr.storage.Put(ctx, sessKeyspace, authID, sessVer, sess); err != nil {
+		l.WithError(err).Error("failed to put session")
 		return "", err
 	}
 
@@ -196,6 +204,8 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 		ACR:    acr,
 		AMR:    ident.AMR,
 	}
+
+	l.Debugf("finishing authorization with scopes %v acr %s amr %s", auth.Scopes, auth.ACR, auth.AMR)
 
 	// upstream handles the redirecting, whereas we expect the URL.
 	// capture the response and use that to create the URL.
@@ -206,8 +216,11 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 
 	// we use the session ID as the auth ID
 	if err := s.oidc.FinishAuthorization(w, req, authID, auth); err != nil {
+		l.WithError(err).Error("error in OIDC FinishAuthorization call")
 		return "", err
 	}
+
+	l.Debugf("called finish authorization, got response code %d with non-zero location: %t", w.Code, w.Header().Get("location") != "")
 
 	// TODO - better error checking?
 	if w.Code != 302 {
@@ -218,6 +231,8 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 	if loc == "" {
 		return "", fmt.Errorf("auth handler didn't set a location header")
 	}
+
+	l.Debug("Authentication successful, returning redirect")
 
 	return loc, nil
 }
@@ -235,18 +250,29 @@ func (s *Server) LoginRequest(ctx context.Context, authID string) (oidcserver.Lo
 
 // authorization is called at the start of the flow
 func (s *Server) authorization(w http.ResponseWriter, req *http.Request) {
+	l := s.logger.WithFields(logrus.Fields{
+		"fn": "authorization",
+	})
+	l.Debug("starting authorization")
+
 	ar, err := s.oidc.StartAuthorization(w, req)
 	if err != nil {
-		s.logger.WithError(err).Error("error starting authorization flow")
+		l.WithError(err).Error("error starting authorization flow")
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+
+	l = l.WithFields(logrus.Fields{
+		"sessionID": ar.SessionID,
+		"clientID":  ar.ClientID,
+	})
+	l.Debug("authorization request parsed")
 
 	// TODO - Validate the scopes provided, ensuring only the ones we'd handle are present
 	sess := &storagev2beta1.Session{}
 	sessVer, err := s.sessionMgr.storage.Get(req.Context(), sessKeyspace, ar.SessionID, sess)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed getting session")
+		l.WithError(err).Error("Failed getting session")
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -257,16 +283,27 @@ func (s *Server) authorization(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if _, err := s.sessionMgr.storage.Put(req.Context(), sessKeyspace, ar.SessionID, sessVer, sess); err != nil {
-		s.logger.WithError(err).Error("error updating session")
+		l.WithError(err).Error("error updating session")
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+
+	l.Debug("calling in to connector login page")
 
 	s.connector.LoginPage(w, req, sessToLoginReq(ar.SessionID, sess))
 }
 
 func (s *Server) token(w http.ResponseWriter, req *http.Request) {
+	l := s.logger.WithFields(logrus.Fields{
+		"fn": "token",
+	})
+	l.Debug("calling OIDC token method")
+
 	err := s.oidc.Token(w, req, func(tr *core.TokenRequest) (*core.TokenResponse, error) {
+		l = l.WithField("sessionID", tr.SessionID)
+
+		l.Debugf("starting token callback. refreshable: %t isRefresh: %t", tr.SessionRefreshable, tr.IsRefresh)
+
 		sess := &storagev2beta1.Session{}
 		sessVer, err := s.sessionMgr.storage.Get(req.Context(), sessKeyspace, tr.SessionID, sess)
 		if err != nil {
@@ -281,8 +318,10 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 		allowRefresh := ok && tr.SessionRefreshable
 
 		if ok && tr.IsRefresh {
+			l.Debug("about to refresh with connector")
 			newID, err := refconn.Refresh(req.Context(), sessToScopes(sess), sessToIdentity(sess))
 			if err != nil {
+				l.Debugf("connector refresh returned error: %v", err)
 				// TODO - how can we make this more graceful if it's for auth
 				// failed reasons.
 				return nil, err
@@ -304,20 +343,33 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 			return nil, err
 		}
 
-		return &core.TokenResponse{
+		resp := &core.TokenResponse{
 			IssueRefreshToken:      allowRefresh,
 			IDToken:                idt,
 			AccessTokenValidUntil:  s.now().Add(s.idTokensValidFor),
 			RefreshTokenValidUntil: s.now().Add(s.refreshValidFor),
-		}, nil
+		}
+
+		l.Debugf("returning token response. issuing refresh token: %t, accessTokValid: %s, refreshTokValid: %s, tok: %v",
+			resp.IssueRefreshToken, resp.AccessTokenValidUntil.String(), resp.RefreshTokenValidUntil.String(), idt)
+
+		return resp, nil
 	})
 	if err != nil {
-		s.logger.WithError(err).Error("Error in token endpoint")
+		l.WithError(err).Error("Error in token endpoint")
 	}
 }
 
 func (s *Server) userinfo(w http.ResponseWriter, req *http.Request) {
+	l := s.logger.WithFields(logrus.Fields{
+		"fn": "userinfo",
+	})
+	l.Debug("calling OIDC userinfo method")
+
 	err := s.oidc.Userinfo(w, req, func(w io.Writer, uireq *core.UserinfoRequest) error {
+		l = l.WithField("sessionID", uireq.SessionID)
+		l.Debug("starting callback")
+
 		sess := &storagev2beta1.Session{}
 		_, err := s.sessionMgr.storage.Get(req.Context(), sessKeyspace, uireq.SessionID, sess)
 		if err != nil {
@@ -336,7 +388,7 @@ func (s *Server) userinfo(w http.ResponseWriter, req *http.Request) {
 		return nil
 	})
 	if err != nil {
-		s.logger.WithError(err).Error("Error in userinfo endpoint")
+		l.WithError(err).Error("Error in userinfo endpoint")
 	}
 }
 

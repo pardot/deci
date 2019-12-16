@@ -26,13 +26,13 @@ import (
 
 func main() {
 	ctx := context.Background()
-	l := logrus.New()
 
 	var (
 		issuer      = kingpin.Flag("issuer", "Issuer URL to serve as").Default("http://localhost:5556").URL()
 		dbURL       = kingpin.Flag("db", "URL to Postgres database, e.g postgres://localhost/deci_dev?sslmode=disable. If empty, in-memory is used.").String()
 		listen      = kingpin.Flag("listen", "Addr to listen on").Default("127.0.0.1:5556").String()
 		skipConsent = kingpin.Flag("skip-consent", "Skip the default user consent screen").Default("true").Bool()
+		debug       = kingpin.Flag("debug", "debug log level").Default("true").Bool()
 
 		// OIDC connector options (optional)
 		oidcIssuer       = kingpin.Flag("oidc-issuer", "Upstream OIDC issuer URL").URL()
@@ -42,6 +42,11 @@ func main() {
 		useServerV1 = kingpin.Flag("serverv1", "use the V1 server, rather than V2").Default("false").Bool()
 	)
 	kingpin.Parse()
+
+	l := logrus.New()
+	if *debug {
+		l.SetLevel(logrus.DebugLevel)
+	}
 
 	var stor storage.Storage
 	if *dbURL != "" {
