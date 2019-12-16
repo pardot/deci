@@ -268,7 +268,13 @@ func (s *Server) authorization(w http.ResponseWriter, req *http.Request) {
 	})
 	l.Debug("authorization request parsed")
 
-	// TODO - Validate the scopes provided, ensuring only the ones we'd handle are present
+	if err := validateScopes(ar.Scopes); err != nil {
+		l.WithError(err).Debug("request has unhandled scopes")
+		// TODO - we should probably expose the auth error stuff in some way in pardot/oidc
+		http.Error(w, "Unhandled scopes", http.StatusBadRequest)
+		return
+	}
+
 	sess := &storagev2beta1.Session{}
 	sessVer, err := s.sessionMgr.storage.Get(req.Context(), sessKeyspace, ar.SessionID, sess)
 	if err != nil {
@@ -482,4 +488,43 @@ func (s *Server) claims2token(claims *storagev1beta1.Claims, tok core.IDToken) (
 	}
 
 	return tok, nil
+}
+
+const (
+	scopeOpenID = "openid"
+
+	// we just allow these anyway for now
+	scopeProfile = "profile"
+	scopeEmail   = "email"
+	scopeAddress = "address"
+	scopePhone   = "phone"
+
+	scopeGroups = "groups"
+
+	scopeOfflineAccess = "offline_access"
+
+	// this is a dex thing we should support for now
+	scopeFederatedID = "federated:id"
+)
+
+func validateScopes(scopes []string) error {
+	var unhandled []string
+	var openid bool
+
+	for _, s := range scopes {
+		switch s {
+		case scopeOpenID:
+			openid = true
+		case scopeProfile, scopeEmail, scopeAddress, scopePhone, scopeGroups, scopeOfflineAccess, scopeFederatedID:
+		default:
+			unhandled = append(unhandled, s)
+		}
+	}
+	if !openid {
+		return fmt.Errorf("openid scope is required")
+	}
+	if len(unhandled) > 0 {
+		return fmt.Errorf("unhandled scopes found: %v", unhandled)
+	}
+	return nil
 }
