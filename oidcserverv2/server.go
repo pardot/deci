@@ -205,7 +205,11 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 		AMR:    ident.AMR,
 	}
 
-	l.Debugf("finishing authorization with scopes %v acr %s amr %s", auth.Scopes, auth.ACR, auth.AMR)
+	l.WithFields(logrus.Fields{
+		"scopes": auth.Scopes,
+		"acr":    auth.ACR,
+		"amr":    auth.AMR,
+	}).Debug("finishing authorization")
 
 	// upstream handles the redirecting, whereas we expect the URL.
 	// capture the response and use that to create the URL.
@@ -220,7 +224,11 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 		return "", err
 	}
 
-	l.Debugf("called finish authorization, got response code %d with non-zero location: %t", w.Code, w.Header().Get("location") != "")
+	l.WithFields(logrus.Fields{
+		"code":         w.Code,
+		"location-set": w.Header().Get("location") != "",
+	})
+	l.Debug("called finish authorization")
 
 	// TODO - better error checking?
 	if w.Code != 302 {
@@ -308,7 +316,11 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 	err := s.oidc.Token(w, req, func(tr *core.TokenRequest) (*core.TokenResponse, error) {
 		l = l.WithField("sessionID", tr.SessionID)
 
-		l.Debugf("starting token callback. refreshable: %t isRefresh: %t", tr.SessionRefreshable, tr.IsRefresh)
+		l.WithFields(logrus.Fields{
+			"refreshable": tr.SessionRefreshable,
+			"isrefresh":   tr.IsRefresh,
+		})
+		l.Debug("starting token callback")
 
 		sess := &storagev2beta1.Session{}
 		sessVer, err := s.sessionMgr.storage.Get(req.Context(), sessKeyspace, tr.SessionID, sess)
@@ -327,7 +339,7 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 			l.Debug("about to refresh with connector")
 			newID, err := refconn.Refresh(req.Context(), sessToScopes(sess), sessToIdentity(sess))
 			if err != nil {
-				l.Debugf("connector refresh returned error: %v", err)
+				l.WithError(err).Debug("connector refresh returned error")
 				// TODO - how can we make this more graceful if it's for auth
 				// failed reasons.
 				return nil, err
@@ -356,8 +368,12 @@ func (s *Server) token(w http.ResponseWriter, req *http.Request) {
 			RefreshTokenValidUntil: s.now().Add(s.refreshValidFor),
 		}
 
-		l.Debugf("returning token response. issuing refresh token: %t, accessTokValid: %s, refreshTokValid: %s, tok: %v",
-			resp.IssueRefreshToken, resp.AccessTokenValidUntil.String(), resp.RefreshTokenValidUntil.String(), idt)
+		l.WithFields(logrus.Fields{
+			"issueRefreshToken": resp.IssueRefreshToken,
+			"accessTokValidTil": resp.AccessTokenValidUntil.String(),
+			"refreshTokValid":   resp.RefreshTokenValidUntil.String(),
+		})
+		l.Debugf("returning token response: %#v", idt)
 
 		return resp, nil
 	})
