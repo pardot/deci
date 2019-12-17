@@ -50,7 +50,7 @@ type errConflict interface {
 	ConflictErr()
 }
 
-// IsConflictErr checks to see if the passed error occured because of a version
+// IsConflictErr checks to see if the passed error occurred because of a version
 // conflict. Errors comply to this if they have a `ConflictErr()` method
 func IsConflictErr(err error) bool {
 	_, ok := err.(errConflict)

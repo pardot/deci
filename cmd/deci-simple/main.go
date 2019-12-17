@@ -13,6 +13,7 @@ import (
 	oidc "github.com/coreos/go-oidc"
 	_ "github.com/lib/pq"
 	"github.com/pardot/deci/oidcserver"
+	"github.com/pardot/deci/oidcserverv2"
 	"github.com/pardot/deci/signer"
 	"github.com/pardot/deci/storage"
 	"github.com/pardot/deci/storage/memory"
@@ -25,20 +26,27 @@ import (
 
 func main() {
 	ctx := context.Background()
-	l := logrus.New()
 
 	var (
 		issuer      = kingpin.Flag("issuer", "Issuer URL to serve as").Default("http://localhost:5556").URL()
 		dbURL       = kingpin.Flag("db", "URL to Postgres database, e.g postgres://localhost/deci_dev?sslmode=disable. If empty, in-memory is used.").String()
 		listen      = kingpin.Flag("listen", "Addr to listen on").Default("127.0.0.1:5556").String()
 		skipConsent = kingpin.Flag("skip-consent", "Skip the default user consent screen").Default("true").Bool()
+		debug       = kingpin.Flag("debug", "debug log level").Default("true").Bool()
 
 		// OIDC connector options (optional)
 		oidcIssuer       = kingpin.Flag("oidc-issuer", "Upstream OIDC issuer URL").URL()
 		oidcClientID     = kingpin.Flag("oidc-client-id", "OIDC Client ID").String()
 		oidcClientSecret = kingpin.Flag("oidc-client-secret", "OIDC Client Secret").String()
+
+		useServerV1 = kingpin.Flag("serverv1", "use the V1 server, rather than V2").Default("false").Bool()
 	)
 	kingpin.Parse()
+
+	l := logrus.New()
+	if *debug {
+		l.SetLevel(logrus.DebugLevel)
+	}
 
 	var stor storage.Storage
 	if *dbURL != "" {
@@ -112,7 +120,16 @@ func main() {
 		mux.Handle((*issuer).Path+"/oidc/", http.StripPrefix((*issuer).Path+"/oidc", connector))
 	}
 
-	server, err := oidcserver.New((*issuer).String(), stor, signer, connectors, clients, oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(*skipConsent))
+	var server http.Handler
+	var err error
+
+	if *useServerV1 {
+		l.Info("Using server v1")
+		server, err = oidcserver.New((*issuer).String(), stor, signer, connectors, clients, oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(*skipConsent))
+	} else {
+		l.Info("Using server v2")
+		server, err = oidcserverv2.New((*issuer).String(), stor, signer, connectors, clients, oidcserverv2.WithLogger(l))
+	}
 	if err != nil {
 		l.WithError(err).Fatal("Failed to construct server")
 	}
@@ -143,7 +160,7 @@ func (s *staticIdentityConnector) LoginPage(w http.ResponseWriter, r *http.Reque
 }
 
 // Refresh updates the identity during a refresh token request.
-func (s *staticIdentityConnector) Refresh(ctx context.Context, sc oidcserver.Scopes, identity oidcserver.Identity) (oidcserver.Identity, error) {
+func (s *staticIdentityConnector) Refresh(_ context.Context, _ oidcserver.Scopes, _ oidcserver.Identity) (oidcserver.Identity, error) { // nolint:unparam // err is nil, but interface req'd
 	return s.identity, nil
 }
 

@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+import "google/protobuf/any.proto";
+import "deci/storage/v1beta1/storage.proto";
+
+package deci.storage.v2beta1;
+option go_package = "github.com/pardot/deci/proto/deci/storage/v2beta1;storagev2beta1";
+
+// Session tracks an authentication throughout it's whole lifecycle. it maps to
+// a pardot/oidc session.
+message Session {
+  // details about the initial information we were requested with
+  LoginRequest login_request = 1;
+
+  // this is the pardot/oidc session we track
+  google.protobuf.Any oidc_session = 2;
+
+  // capture the claims the legacy connector needs if this is nil, the
+  // authorization has not yet completed
+  deci.storage.v1beta1.Claims claims = 3;
+
+  // arbitrary data the connector tracks along with the session. Usually JSON.
+  bytes connector_data = 4;
+}
+
+// Tracks information about the initial request, so we can pass it to the
+// connector on demand
+message LoginRequest {
+  repeated string scopes = 1;
+  repeated string acr_values = 2;
+}
+
+// maps the subject data dex/deci uses for their ID tokens.
+// https://github.com/dexidp/dex/blob/master/server/internal/types.proto
+// The proto binary should be Raw UEL encoded to make the subject
+// https://github.com/dexidp/dex/blob/master/server/internal/codec.go
+message DexSubject {
+  string user_id = 1;
+  string conn_id = 2;
+}
