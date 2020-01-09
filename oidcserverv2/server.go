@@ -232,7 +232,7 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 
 	if s.consentAll ||
 		(s.consentOffline && strContains(sess.LoginRequest.Scopes, "offline_access")) {
-		return fmt.Sprintf("/consent?authid=%s", authID), nil
+		return fmt.Sprintf("/consent?authid=%s", url.QueryEscape(authID)), nil
 	}
 	return s.finishAuthenticate(ctx, authID)
 }
