@@ -16,6 +16,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/gorilla/csrf"
+	"github.com/pardot/deci/bootstrap"
 	"github.com/pardot/deci/oidcserver"
 	storagev1beta1 "github.com/pardot/deci/proto/deci/storage/v1beta1"
 	storagev2beta1 "github.com/pardot/deci/proto/deci/storage/v2beta1"
@@ -172,6 +173,11 @@ func New(issuer string, storage storage.Storage, signer oidcserver.Signer, conne
 		return nil, err
 	}
 
+	_, err = bootstrap.Bootstrap.FindString("jquery-3.4.1.slim.min.js")
+	if err != nil {
+		return nil, err
+	}
+
 	s.oidc = o
 
 	return s, nil
@@ -185,6 +191,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		s.mux.HandleFunc("/userinfo", s.userinfo)
 		if s.consentAll || s.consentOffline {
 			s.mux.Handle("/consent", s.csrf(http.HandlerFunc(s.consent)))
+			s.mux.Handle("/bootstrap/", http.StripPrefix("/bootstrap", http.FileServer(bootstrap.Bootstrap)))
 		}
 		s.mux.Handle(
 			"/.well-known/openid-configuration/",
