@@ -28,6 +28,7 @@ message Session {
 message LoginRequest {
   repeated string scopes = 1;
   repeated string acr_values = 2;
+  string client_id = 3;
 }
 
 // maps the subject data dex/deci uses for their ID tokens.

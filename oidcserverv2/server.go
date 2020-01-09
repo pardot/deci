@@ -54,6 +54,23 @@ func WithLogger(logger logrus.FieldLogger) ServerOption {
 	})
 }
 
+// WithConsent injects a consent page to all oauth flows
+func WithConsent() ServerOption {
+	return ServerOption(func(s *Server) error {
+		s.consentAll = true
+		return nil
+	})
+}
+
+// WithOfflineConsent injects a consent page for all sessions requesting
+// offline_access, aka a refresh token. This is required by the spec
+func WithOfflineConsent() ServerOption {
+	return ServerOption(func(s *Server) error {
+		s.consentOffline = true
+		return nil
+	})
+}
+
 // Server is a cut-down OIDC server. It is designed to be a drop-in for the
 // current oidcserver as a migration step towards a pardot/oidc implementation
 type Server struct {
@@ -62,6 +79,9 @@ type Server struct {
 	idTokensValidFor     time.Duration
 	authRequestsValidFor time.Duration
 	refreshValidFor      time.Duration
+
+	consentAll     bool
+	consentOffline bool
 
 	oidc *core.OIDC
 
@@ -158,6 +178,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		s.mux.HandleFunc("/auth", s.authorization)
 		s.mux.HandleFunc("/token", s.token)
 		s.mux.HandleFunc("/userinfo", s.userinfo)
+		s.mux.HandleFunc("/consent", s.consent)
 		s.mux.Handle(
 			"/.well-known/openid-configuration/",
 			http.StripPrefix("/.well-known/openid-configuration", s.discovery),
@@ -195,7 +216,69 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 		return "", err
 	}
 
+	if s.consentAll ||
+		(s.consentOffline && strContains(sess.LoginRequest.Scopes, "offline_access")) {
+		return fmt.Sprintf("/consent?authid=%s", authID), nil
+	}
 	return s.finishAuthenticate(ctx, authID)
+}
+
+func (s *Server) consent(w http.ResponseWriter, req *http.Request) {
+	if req.Method == "POST" {
+		s.finalizeConsent(w, req)
+		return
+	}
+	s.renderConsent(w, req)
+}
+
+func (s *Server) renderConsent(w http.ResponseWriter, req *http.Request) {
+	l := s.logger.WithField("fn", "renderConsent")
+	ctx := req.Context()
+
+	authID := req.URL.Query().Get("authid")
+	if authID == "" {
+		http.Error(w, "Missing auth ID", http.StatusBadRequest)
+		return
+	}
+
+	sess := &storagev2beta1.Session{}
+	if _, err := s.sessionMgr.storage.Get(ctx, sessKeyspace, authID, sess); err != nil {
+		l.WithError(err).Error("failed to get session")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	td := &consentData{
+		AuthID: authID,
+		Client: sess.LoginRequest.ClientId,
+		Scopes: sess.LoginRequest.Scopes,
+	}
+
+	if err := consentTmpl.Execute(w, td); err != nil {
+		l.WithError(err).Error("failed to render template")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) finalizeConsent(w http.ResponseWriter, req *http.Request) {
+	l := s.logger.WithField("fn", "renderConsent")
+	ctx := req.Context()
+
+	authID := req.URL.Query().Get("authid")
+	if authID == "" {
+		http.Error(w, "Missing auth ID", http.StatusBadRequest)
+		return
+	}
+
+	redir, err := s.finishAuthenticate(ctx, authID)
+	if err != nil {
+		l.WithError(err).Error("failed to finalize consent")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, req, redir, http.StatusFound)
 }
 
 // finishAuthenticate will finalize the authentication flow, and return the URL
@@ -287,7 +370,6 @@ func (s *Server) authorization(w http.ResponseWriter, req *http.Request) {
 	ar, err := s.oidc.StartAuthorization(w, req)
 	if err != nil {
 		l.WithError(err).Error("error starting authorization flow")
-		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -315,6 +397,7 @@ func (s *Server) authorization(w http.ResponseWriter, req *http.Request) {
 	sess.LoginRequest = &storagev2beta1.LoginRequest{
 		Scopes:    ar.Scopes,
 		AcrValues: ar.ACRValues,
+		ClientId:  ar.ClientID,
 	}
 
 	if _, err := s.sessionMgr.storage.Put(req.Context(), sessKeyspace, ar.SessionID, sessVer, sess); err != nil {
