@@ -238,7 +238,7 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 }
 
 func (s *Server) consent(w http.ResponseWriter, req *http.Request) {
-	if req.Method == "POST" {
+	if req.Method == http.MethodPost {
 		s.finalizeConsent(w, req)
 		return
 	}
