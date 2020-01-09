@@ -168,7 +168,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // Authenticate associates the user's identity with the given authID, then
-// returns final redirect URL.
+// returns a URL the user should be redirected to. This will either be for
+// a confirmation page, or the calling app
 //
 // This is passed to the connector and used via "Initialize"
 func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserver.Identity) (returnURL string, err error) {
@@ -178,11 +179,6 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 		"fn":     "Authenticate",
 	})
 	l.Info("Starting Authenticate")
-
-	var acr string
-	if ident.ACR != nil {
-		acr = *ident.ACR
-	}
 
 	// Stash the data alongside our session
 
@@ -197,6 +193,31 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 	if _, err := s.sessionMgr.storage.Put(ctx, sessKeyspace, authID, sessVer, sess); err != nil {
 		l.WithError(err).Error("failed to put session")
 		return "", err
+	}
+
+	return s.finishAuthenticate(ctx, authID)
+}
+
+// finishAuthenticate will finalize the authentication flow, and return the URL
+// the user should be redirected to
+func (s *Server) finishAuthenticate(ctx context.Context, authID string) (returnURL string, err error) {
+	l := s.logger.WithFields(logrus.Fields{
+		"authID": authID,
+		"fn":     "finishAuthenticate",
+	})
+	l.Info("Starting")
+
+	sess := &storagev2beta1.Session{}
+	if _, err := s.sessionMgr.storage.Get(ctx, sessKeyspace, authID, sess); err != nil {
+		l.WithError(err).Error("failed to get session")
+		return "", err
+	}
+
+	ident := sessToIdentity(sess)
+
+	var acr string
+	if ident.ACR != nil {
+		acr = *ident.ACR
 	}
 
 	auth := &core.Authorization{
