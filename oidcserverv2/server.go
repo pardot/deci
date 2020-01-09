@@ -231,7 +231,7 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 	}
 
 	if s.consentAll ||
-		(s.consentOffline && strContains(sess.LoginRequest.Scopes, "offline_access")) {
+		(s.consentOffline && strContains(sess.LoginRequest.Scopes, scopeOfflineAccess)) {
 		return fmt.Sprintf("/consent?authid=%s", url.QueryEscape(authID)), nil
 	}
 	return s.finishAuthenticate(ctx, authID)
@@ -277,7 +277,7 @@ func (s *Server) renderConsent(w http.ResponseWriter, req *http.Request) {
 	td := &consentData{
 		AuthID:     authID,
 		ClientName: cname,
-		Offline:    strContains(sess.LoginRequest.Scopes, "offline_access"),
+		Offline:    strContains(sess.LoginRequest.Scopes, scopeOfflineAccess),
 
 		CSRFField: csrf.TemplateField(req),
 	}
@@ -565,8 +565,8 @@ func sessToLoginReq(sessID string, sess *storagev2beta1.Session) oidcserver.Logi
 
 func sessToScopes(sess *storagev2beta1.Session) oidcserver.Scopes {
 	return oidcserver.Scopes{
-		OfflineAccess: strContains(sess.LoginRequest.Scopes, "offline_access"),
-		Groups:        strContains(sess.LoginRequest.Scopes, "groups"),
+		OfflineAccess: strContains(sess.LoginRequest.Scopes, scopeOfflineAccess),
+		Groups:        strContains(sess.LoginRequest.Scopes, scopeGroups),
 	}
 }
 
