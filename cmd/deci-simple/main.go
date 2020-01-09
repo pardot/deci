@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"database/sql"
 	"encoding/base32"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,16 +29,20 @@ func main() {
 	ctx := context.Background()
 
 	var (
-		issuer      = kingpin.Flag("issuer", "Issuer URL to serve as").Default("http://localhost:5556").URL()
-		dbURL       = kingpin.Flag("db", "URL to Postgres database, e.g postgres://localhost/deci_dev?sslmode=disable. If empty, in-memory is used.").String()
-		listen      = kingpin.Flag("listen", "Addr to listen on").Default("127.0.0.1:5556").String()
-		skipConsent = kingpin.Flag("skip-consent", "Skip the default user consent screen").Default("true").Bool()
-		debug       = kingpin.Flag("debug", "debug log level").Default("true").Bool()
+		issuer = kingpin.Flag("issuer", "Issuer URL to serve as").Default("http://localhost:5556").URL()
+		dbURL  = kingpin.Flag("db", "URL to Postgres database, e.g postgres://localhost/deci_dev?sslmode=disable. If empty, in-memory is used.").String()
+		listen = kingpin.Flag("listen", "Addr to listen on").Default("127.0.0.1:5556").String()
+		debug  = kingpin.Flag("debug", "debug log level").Default("true").Bool()
 
 		// OIDC connector options (optional)
 		oidcIssuer       = kingpin.Flag("oidc-issuer", "Upstream OIDC issuer URL").URL()
 		oidcClientID     = kingpin.Flag("oidc-client-id", "OIDC Client ID").String()
 		oidcClientSecret = kingpin.Flag("oidc-client-secret", "OIDC Client Secret").String()
+
+		allConsent     = kingpin.Flag("consent", "Display a consent screen").Default("false").Bool()
+		offlineConsent = kingpin.Flag("offline-consent", "Display a consent screen for offline sessions").Default("false").Bool()
+
+		csrfKey = kingpin.Flag("csrf-key", "32 byte key for CSRF protection, hex format").Default("0000000000000000000000000000000000000000000000000000000000000000").String()
 
 		useServerV1 = kingpin.Flag("serverv1", "use the V1 server, rather than V2").Default("false").Bool()
 	)
@@ -98,6 +103,7 @@ func main() {
 	}
 
 	if *oidcIssuer != nil {
+		log.Printf("Using upstream issuer: %s", (*oidcIssuer).String())
 		provider, err := oidc.NewProvider(ctx, (*oidcIssuer).String())
 		if err != nil {
 			l.WithError(err).Fatal("Failed to construct OIDC provider")
@@ -123,12 +129,24 @@ func main() {
 	var server http.Handler
 	var err error
 
+	binaryCSRFKey, err := hex.DecodeString(*csrfKey)
+	if err != nil {
+		l.WithError(err).Fatalf("Failed to hex decode CSRF key")
+	} else if len(binaryCSRFKey) != 32 {
+		l.Fatal("CSRF key must be 32-bytes, hex encoded")
+	}
+
 	if *useServerV1 {
 		l.Info("Using server v1")
-		server, err = oidcserver.New((*issuer).String(), stor, signer, connectors, clients, oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(*skipConsent))
+		server, err = oidcserver.New((*issuer).String(), stor, signer, connectors, clients,
+			oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(!(*offlineConsent || *allConsent)))
 	} else {
 		l.Info("Using server v2")
-		server, err = oidcserverv2.New((*issuer).String(), stor, signer, connectors, clients, oidcserverv2.WithLogger(l))
+		opts := []oidcserverv2.ServerOption{oidcserverv2.WithLogger(l)}
+		if *offlineConsent || *allConsent {
+			opts = append(opts, oidcserverv2.WithConsent(binaryCSRFKey, *offlineConsent))
+		}
+		server, err = oidcserverv2.New((*issuer).String(), stor, signer, connectors, clients, opts...)
 	}
 	if err != nil {
 		l.WithError(err).Fatal("Failed to construct server")

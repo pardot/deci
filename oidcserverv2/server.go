@@ -15,6 +15,8 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/wrappers"
+	"github.com/gorilla/csrf"
+	"github.com/pardot/deci/bootstrap"
 	"github.com/pardot/deci/oidcserver"
 	storagev1beta1 "github.com/pardot/deci/proto/deci/storage/v1beta1"
 	storagev2beta1 "github.com/pardot/deci/proto/deci/storage/v2beta1"
@@ -54,6 +56,25 @@ func WithLogger(logger logrus.FieldLogger) ServerOption {
 	})
 }
 
+// WithConsent injects a consent page to all oauth flows. A 32-byte CSRF key
+// needs to be provided. if offlineOnly is true, this will only be applied to
+// offline sessions
+func WithConsent(csrfKey []byte, offlineOnly bool) ServerOption {
+	return ServerOption(func(s *Server) error {
+		s.consentAll = !offlineOnly
+		s.consentOffline = offlineOnly
+		if len(csrfKey) != 32 {
+			return fmt.Errorf("CSRF key must be 32 bytes long")
+		}
+		csrfOpts := []csrf.Option{csrf.SameSite(csrf.SameSiteStrictMode)}
+		if s.issuerURL.Scheme != "https" {
+			csrfOpts = append(csrfOpts, csrf.Secure(false))
+		}
+		s.csrf = csrf.Protect([]byte(csrfKey), csrfOpts...)
+		return nil
+	})
+}
+
 // Server is a cut-down OIDC server. It is designed to be a drop-in for the
 // current oidcserver as a migration step towards a pardot/oidc implementation
 type Server struct {
@@ -62,6 +83,9 @@ type Server struct {
 	idTokensValidFor     time.Duration
 	authRequestsValidFor time.Duration
 	refreshValidFor      time.Duration
+
+	consentAll     bool
+	consentOffline bool
 
 	oidc *core.OIDC
 
@@ -78,6 +102,8 @@ type Server struct {
 
 	mux      *http.ServeMux
 	muxSetup sync.Once
+
+	csrf func(http.Handler) http.Handler
 
 	now func() time.Time
 }
@@ -147,6 +173,11 @@ func New(issuer string, storage storage.Storage, signer oidcserver.Signer, conne
 		return nil, err
 	}
 
+	_, err = bootstrap.Bootstrap.FindString("jquery-3.4.1.slim.min.js")
+	if err != nil {
+		return nil, err
+	}
+
 	s.oidc = o
 
 	return s, nil
@@ -158,6 +189,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		s.mux.HandleFunc("/auth", s.authorization)
 		s.mux.HandleFunc("/token", s.token)
 		s.mux.HandleFunc("/userinfo", s.userinfo)
+		if s.consentAll || s.consentOffline {
+			s.mux.Handle("/consent", s.csrf(http.HandlerFunc(s.consent)))
+			s.mux.Handle("/bootstrap/", http.StripPrefix("/bootstrap", http.FileServer(bootstrap.Bootstrap)))
+		}
 		s.mux.Handle(
 			"/.well-known/openid-configuration/",
 			http.StripPrefix("/.well-known/openid-configuration", s.discovery),
@@ -168,7 +203,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // Authenticate associates the user's identity with the given authID, then
-// returns final redirect URL.
+// returns a URL the user should be redirected to. This will either be for
+// a confirmation page, or the calling app
 //
 // This is passed to the connector and used via "Initialize"
 func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserver.Identity) (returnURL string, err error) {
@@ -178,11 +214,6 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 		"fn":     "Authenticate",
 	})
 	l.Info("Starting Authenticate")
-
-	var acr string
-	if ident.ACR != nil {
-		acr = *ident.ACR
-	}
 
 	// Stash the data alongside our session
 
@@ -197,6 +228,107 @@ func (s *Server) Authenticate(ctx context.Context, authID string, ident oidcserv
 	if _, err := s.sessionMgr.storage.Put(ctx, sessKeyspace, authID, sessVer, sess); err != nil {
 		l.WithError(err).Error("failed to put session")
 		return "", err
+	}
+
+	if s.consentAll ||
+		(s.consentOffline && strContains(sess.LoginRequest.Scopes, scopeOfflineAccess)) {
+		return fmt.Sprintf("/consent?authid=%s", url.QueryEscape(authID)), nil
+	}
+	return s.finishAuthenticate(ctx, authID)
+}
+
+func (s *Server) consent(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodPost {
+		s.finalizeConsent(w, req)
+		return
+	}
+	s.renderConsent(w, req)
+}
+
+func (s *Server) renderConsent(w http.ResponseWriter, req *http.Request) {
+	l := s.logger.WithField("fn", "renderConsent")
+	ctx := req.Context()
+
+	authID := req.URL.Query().Get("authid")
+	if authID == "" {
+		http.Error(w, "Missing auth ID", http.StatusBadRequest)
+		return
+	}
+
+	sess := &storagev2beta1.Session{}
+	if _, err := s.sessionMgr.storage.Get(ctx, sessKeyspace, authID, sess); err != nil {
+		l.WithError(err).Error("failed to get session")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	cl, err := s.clients.clients.GetClient(sess.LoginRequest.ClientId)
+	if err != nil {
+		l.WithError(err).WithField("client-id", sess.LoginRequest.ClientId).Error("couldn't find client")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	cname := sess.LoginRequest.ClientId
+	if cl.Name != "" {
+		cname = cl.Name
+	}
+
+	td := &consentData{
+		AuthID:     authID,
+		ClientName: cname,
+		Offline:    strContains(sess.LoginRequest.Scopes, scopeOfflineAccess),
+
+		CSRFField: csrf.TemplateField(req),
+	}
+
+	if err := consentTmpl.Execute(w, td); err != nil {
+		l.WithError(err).Error("failed to render template")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) finalizeConsent(w http.ResponseWriter, req *http.Request) {
+	l := s.logger.WithField("fn", "renderConsent")
+	ctx := req.Context()
+
+	authID := req.Form.Get("authid")
+	if authID == "" {
+		http.Error(w, "Missing auth ID", http.StatusBadRequest)
+		return
+	}
+
+	redir, err := s.finishAuthenticate(ctx, authID)
+	if err != nil {
+		l.WithError(err).Error("failed to finalize consent")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, req, redir, http.StatusFound)
+}
+
+// finishAuthenticate will finalize the authentication flow, and return the URL
+// the user should be redirected to
+func (s *Server) finishAuthenticate(ctx context.Context, authID string) (returnURL string, err error) {
+	l := s.logger.WithFields(logrus.Fields{
+		"authID": authID,
+		"fn":     "finishAuthenticate",
+	})
+	l.Info("Starting")
+
+	sess := &storagev2beta1.Session{}
+	if _, err := s.sessionMgr.storage.Get(ctx, sessKeyspace, authID, sess); err != nil {
+		l.WithError(err).Error("failed to get session")
+		return "", err
+	}
+
+	ident := sessToIdentity(sess)
+
+	var acr string
+	if ident.ACR != nil {
+		acr = *ident.ACR
 	}
 
 	auth := &core.Authorization{
@@ -266,7 +398,6 @@ func (s *Server) authorization(w http.ResponseWriter, req *http.Request) {
 	ar, err := s.oidc.StartAuthorization(w, req)
 	if err != nil {
 		l.WithError(err).Error("error starting authorization flow")
-		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -294,6 +425,7 @@ func (s *Server) authorization(w http.ResponseWriter, req *http.Request) {
 	sess.LoginRequest = &storagev2beta1.LoginRequest{
 		Scopes:    ar.Scopes,
 		AcrValues: ar.ACRValues,
+		ClientId:  ar.ClientID,
 	}
 
 	if _, err := s.sessionMgr.storage.Put(req.Context(), sessKeyspace, ar.SessionID, sessVer, sess); err != nil {
@@ -433,8 +565,8 @@ func sessToLoginReq(sessID string, sess *storagev2beta1.Session) oidcserver.Logi
 
 func sessToScopes(sess *storagev2beta1.Session) oidcserver.Scopes {
 	return oidcserver.Scopes{
-		OfflineAccess: strContains(sess.LoginRequest.Scopes, "offline_access"),
-		Groups:        strContains(sess.LoginRequest.Scopes, "groups"),
+		OfflineAccess: strContains(sess.LoginRequest.Scopes, scopeOfflineAccess),
+		Groups:        strContains(sess.LoginRequest.Scopes, scopeGroups),
 	}
 }
 

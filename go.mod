@@ -13,6 +13,7 @@ require (
 	github.com/golangci/golangci-lint v1.21.0
 	github.com/google/go-cmp v0.3.0
 	github.com/gorilla/context v1.1.1 // indirect
+	github.com/gorilla/csrf v1.6.2
 	github.com/gorilla/handlers v1.4.0
 	github.com/gorilla/mux v1.6.2
 	github.com/kylelemons/godebug v0.0.0-20170820004349-d65d576e9348

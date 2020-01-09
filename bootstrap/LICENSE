@@ -1,0 +1,5 @@
+Vendored dependencies are under their respective licences
+
+* boostrap: https://github.com/twbs/bootstrap/blob/master/LICENSE
+* jquery: https://github.com/jquery/jquery/blob/master/LICENSE.txt
+* popper: https://github.com/popperjs/popper.js/blob/master/LICENSE.md
