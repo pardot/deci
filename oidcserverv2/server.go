@@ -15,6 +15,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/wrappers"
+	"github.com/gorilla/csrf"
 	"github.com/pardot/deci/oidcserver"
 	storagev1beta1 "github.com/pardot/deci/proto/deci/storage/v1beta1"
 	storagev2beta1 "github.com/pardot/deci/proto/deci/storage/v2beta1"
@@ -54,19 +55,21 @@ func WithLogger(logger logrus.FieldLogger) ServerOption {
 	})
 }
 
-// WithConsent injects a consent page to all oauth flows
-func WithConsent() ServerOption {
+// WithConsent injects a consent page to all oauth flows. A 32-byte CSRF key
+// needs to be provided. if offlineOnly is true, this will only be applied to
+// offline sessions
+func WithConsent(csrfKey []byte, offlineOnly bool) ServerOption {
 	return ServerOption(func(s *Server) error {
-		s.consentAll = true
-		return nil
-	})
-}
-
-// WithOfflineConsent injects a consent page for all sessions requesting
-// offline_access, aka a refresh token. This is required by the spec
-func WithOfflineConsent() ServerOption {
-	return ServerOption(func(s *Server) error {
-		s.consentOffline = true
+		s.consentAll = !offlineOnly
+		s.consentOffline = offlineOnly
+		if len(csrfKey) != 32 {
+			return fmt.Errorf("CSRF key must be 32 bytes long")
+		}
+		csrfOpts := []csrf.Option{csrf.SameSite(csrf.SameSiteStrictMode)}
+		if s.issuerURL.Scheme != "https" {
+			csrfOpts = append(csrfOpts, csrf.Secure(false))
+		}
+		s.csrf = csrf.Protect([]byte(csrfKey), csrfOpts...)
 		return nil
 	})
 }
@@ -98,6 +101,8 @@ type Server struct {
 
 	mux      *http.ServeMux
 	muxSetup sync.Once
+
+	csrf func(http.Handler) http.Handler
 
 	now func() time.Time
 }
@@ -178,7 +183,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		s.mux.HandleFunc("/auth", s.authorization)
 		s.mux.HandleFunc("/token", s.token)
 		s.mux.HandleFunc("/userinfo", s.userinfo)
-		s.mux.HandleFunc("/consent", s.consent)
+		if s.consentAll || s.consentOffline {
+			s.mux.Handle("/consent", s.csrf(http.HandlerFunc(s.consent)))
+		}
 		s.mux.Handle(
 			"/.well-known/openid-configuration/",
 			http.StripPrefix("/.well-known/openid-configuration", s.discovery),
@@ -264,6 +271,8 @@ func (s *Server) renderConsent(w http.ResponseWriter, req *http.Request) {
 		AuthID:     authID,
 		ClientName: cname,
 		Offline:    strContains(sess.LoginRequest.Scopes, "offline_access"),
+
+		CSRFField: csrf.TemplateField(req),
 	}
 
 	if err := consentTmpl.Execute(w, td); err != nil {
@@ -277,7 +286,7 @@ func (s *Server) finalizeConsent(w http.ResponseWriter, req *http.Request) {
 	l := s.logger.WithField("fn", "renderConsent")
 	ctx := req.Context()
 
-	authID := req.URL.Query().Get("authid")
+	authID := req.Form.Get("authid")
 	if authID == "" {
 		http.Error(w, "Missing auth ID", http.StatusBadRequest)
 		return

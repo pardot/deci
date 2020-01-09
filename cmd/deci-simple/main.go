@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"database/sql"
 	"encoding/base32"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -40,6 +41,8 @@ func main() {
 
 		allConsent     = kingpin.Flag("consent", "Display a consent screen").Default("false").Bool()
 		offlineConsent = kingpin.Flag("offline-consent", "Display a consent screen for offline sessions").Default("false").Bool()
+
+		csrfKey = kingpin.Flag("csrf-key", "32 byte key for CSRF protection, hex format").Default("0000000000000000000000000000000000000000000000000000000000000000").String()
 
 		useServerV1 = kingpin.Flag("serverv1", "use the V1 server, rather than V2").Default("false").Bool()
 	)
@@ -126,6 +129,13 @@ func main() {
 	var server http.Handler
 	var err error
 
+	binaryCSRFKey, err := hex.DecodeString(*csrfKey)
+	if err != nil {
+		l.WithError(err).Fatalf("Failed to hex decode CSRF key")
+	} else if len(binaryCSRFKey) != 32 {
+		l.Fatal("CSRF key must be 32-bytes, hex encoded")
+	}
+
 	if *useServerV1 {
 		l.Info("Using server v1")
 		server, err = oidcserver.New((*issuer).String(), stor, signer, connectors, clients,
@@ -133,11 +143,8 @@ func main() {
 	} else {
 		l.Info("Using server v2")
 		opts := []oidcserverv2.ServerOption{oidcserverv2.WithLogger(l)}
-		if *allConsent {
-			opts = append(opts, oidcserverv2.WithConsent())
-		}
-		if *offlineConsent {
-			opts = append(opts, oidcserverv2.WithOfflineConsent())
+		if *offlineConsent || *allConsent {
+			opts = append(opts, oidcserverv2.WithConsent(binaryCSRFKey, *offlineConsent))
 		}
 		server, err = oidcserverv2.New((*issuer).String(), stor, signer, connectors, clients, opts...)
 	}
