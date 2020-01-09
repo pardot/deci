@@ -3,9 +3,9 @@ package oidcserverv2
 import "html/template"
 
 type consentData struct {
-	AuthID string
-	Client string
-	Scopes []string
+	AuthID     string
+	ClientName string
+	Offline    bool
 }
 
 var consentTmpl = template.Must(template.New("consent").Parse(`
@@ -15,7 +15,10 @@ var consentTmpl = template.Must(template.New("consent").Parse(`
 <body>
   <div>
 	<form action="" method="POST">
-	  <p>{{ .Client }} requests {{ .Scopes }}</p>
+	  <p>{{ .ClientName }} is requesting profile information, and an identity token it can use to verify you.</p>
+	  {{ if .Offline }}
+	  <p>In addition, the client has requested offline access. This will allow it to transparently obtain new ID tokens in the background.</p>
+	  {{ end }}
 	  <input type="hidden" value="{{ .AuthID }}">
 	  <input type="submit" value="Confirm">
 	</form>

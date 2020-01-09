@@ -248,10 +248,22 @@ func (s *Server) renderConsent(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	cl, err := s.clients.clients.GetClient(sess.LoginRequest.ClientId)
+	if err != nil {
+		l.WithError(err).WithField("client-id", sess.LoginRequest.ClientId).Error("couldn't find client")
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	cname := sess.LoginRequest.ClientId
+	if cl.Name != "" {
+		cname = cl.Name
+	}
+
 	td := &consentData{
-		AuthID: authID,
-		Client: sess.LoginRequest.ClientId,
-		Scopes: sess.LoginRequest.Scopes,
+		AuthID:     authID,
+		ClientName: cname,
+		Offline:    strContains(sess.LoginRequest.Scopes, "offline_access"),
 	}
 
 	if err := consentTmpl.Execute(w, td); err != nil {
