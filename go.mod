@@ -18,7 +18,7 @@ require (
 	github.com/gorilla/mux v1.6.2
 	github.com/kylelemons/godebug v0.0.0-20170820004349-d65d576e9348
 	github.com/lib/pq v1.2.0
-	github.com/pardot/oidc v0.0.0-20191217161444-854f94da5d03
+	github.com/pardot/oidc v0.0.0-20200110142437-3c11e6b1d638
 	github.com/prometheus/client_golang v0.9.3
 	github.com/sirupsen/logrus v1.4.2
 	go.etcd.io/bbolt v1.3.3
