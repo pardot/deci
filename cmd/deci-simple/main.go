@@ -14,7 +14,6 @@ import (
 	oidc "github.com/coreos/go-oidc"
 	_ "github.com/lib/pq"
 	"github.com/pardot/deci/oidcserver"
-	"github.com/pardot/deci/oidcserverv2"
 	"github.com/pardot/deci/signer"
 	"github.com/pardot/deci/storage"
 	"github.com/pardot/deci/storage/memory"
@@ -39,12 +38,9 @@ func main() {
 		oidcClientID     = kingpin.Flag("oidc-client-id", "OIDC Client ID").String()
 		oidcClientSecret = kingpin.Flag("oidc-client-secret", "OIDC Client Secret").String()
 
-		allConsent     = kingpin.Flag("consent", "Display a consent screen").Default("false").Bool()
-		offlineConsent = kingpin.Flag("offline-consent", "Display a consent screen for offline sessions").Default("false").Bool()
+		skipConsent = kingpin.Flag("skip-consent", "Skip the consent screeen").Default("false").Bool()
 
 		csrfKey = kingpin.Flag("csrf-key", "32 byte key for CSRF protection, hex format").Default("0000000000000000000000000000000000000000000000000000000000000000").String()
-
-		useServerV1 = kingpin.Flag("serverv1", "use the V1 server, rather than V2").Default("false").Bool()
 	)
 	kingpin.Parse()
 
@@ -136,18 +132,8 @@ func main() {
 		l.Fatal("CSRF key must be 32-bytes, hex encoded")
 	}
 
-	if *useServerV1 {
-		l.Info("Using server v1")
-		server, err = oidcserver.New((*issuer).String(), stor, signer, connectors, clients,
-			oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(!(*offlineConsent || *allConsent)))
-	} else {
-		l.Info("Using server v2")
-		opts := []oidcserverv2.ServerOption{oidcserverv2.WithLogger(l)}
-		if *offlineConsent || *allConsent {
-			opts = append(opts, oidcserverv2.WithConsent(binaryCSRFKey, *offlineConsent))
-		}
-		server, err = oidcserverv2.New((*issuer).String(), stor, signer, connectors, clients, opts...)
-	}
+	server, err = oidcserver.New((*issuer).String(), stor, signer, connectors, clients,
+		oidcserver.WithLogger(l), oidcserver.WithSkipApprovalScreen(*skipConsent))
 	if err != nil {
 		l.WithError(err).Fatal("Failed to construct server")
 	}
