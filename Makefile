@@ -13,15 +13,11 @@ test:
 lint: $(gopath)/bin/gobin
 	$(gopath)/bin/gobin -m -run github.com/golangci/golangci-lint/cmd/golangci-lint run ./...
 
-packr: oidcserver/oidcserver-packr.go bootstrap/bootstrap-packr.go
+packr: oidcserver/oidcserver-packr.go
 
 oidcserver/oidcserver-packr.go: $(gopath)/bin/gobin oidcserver/web
 	cd oidcserver && gobin -m -run github.com/gobuffalo/packr/v2/packr2 clean
 	cd oidcserver && gobin -m -run github.com/gobuffalo/packr/v2/packr2
-
-bootstrap/bootstrap-packr.go: $(gopath)/bin/gobin bootstrap/assets
-	cd bootstrap && gobin -m -run github.com/gobuffalo/packr/v2/packr2 clean
-	cd bootstrap && gobin -m -run github.com/gobuffalo/packr/v2/packr2
 
 proto: proto/deci/storage/v1beta1/storage.pb.go proto/deci/storage/v2beta1/storage.pb.go
 
