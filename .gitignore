@@ -1,2 +1,3 @@
 /.gobincache
 /db
+/bin/golangci-lint*
