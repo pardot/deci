@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +22,15 @@ import (
 	jose "gopkg.in/square/go-jose.v2"
 )
 
-// TODO(ericchiang): clean this file up and figure out more idiomatic error handling.
+var (
+	// reValidPublicRedirectUri is a fairly strict regular expression that must
+	// match against the redirect URI for a 'public' client. It intentionally may
+	// not match all URLs that are technically valid, but is it meant to match
+	// all commonly constructed ones, without inadvertently falling victim to
+	// parser bugs or parser inconsistencies (e.g.,
+	// https://www.blackhat.com/docs/us-17/thursday/us-17-Tsai-A-New-Era-Of-SSRF-Exploiting-URL-Parser-In-Trending-Programming-Languages.pdf)
+	reValidPublicRedirectURI = regexp.MustCompile(`\Ahttp://localhost(?::[0-9]{1,5})?(?:|/[A-Za-z0-9./_-]{0,1000})\z`)
+)
 
 // authErr is an error response to an authorization request.
 // See: https://tools.ietf.org/html/rfc6749#section-4.1.2.1
@@ -502,17 +510,5 @@ func validateRedirectURI(client *Client, redirectURI string) bool {
 		return true
 	}
 
-	// verify that the host is of form "http://localhost:(port)(path)" or "http://localhost(path)"
-	u, err := url.Parse(redirectURI)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "http" {
-		return false
-	}
-	if u.Host == "localhost" {
-		return true
-	}
-	host, _, err := net.SplitHostPort(u.Host)
-	return err == nil && host == "localhost"
+	return reValidPublicRedirectURI.MatchString(redirectURI)
 }
