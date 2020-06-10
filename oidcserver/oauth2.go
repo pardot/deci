@@ -29,7 +29,7 @@ var (
 	// all commonly constructed ones, without inadvertently falling victim to
 	// parser bugs or parser inconsistencies (e.g.,
 	// https://www.blackhat.com/docs/us-17/thursday/us-17-Tsai-A-New-Era-Of-SSRF-Exploiting-URL-Parser-In-Trending-Programming-Languages.pdf)
-	reValidPublicRedirectURI = regexp.MustCompile(`\Ahttp://localhost(?::[0-9]+)?(?:|/[A-Za-z0-9./_-]*)\z`)
+	reValidPublicRedirectURI = regexp.MustCompile(`\Ahttp://localhost(?::[0-9]{1,5})?(?:|/[A-Za-z0-9./_-]{0,1000})\z`)
 )
 
 // authErr is an error response to an authorization request.
