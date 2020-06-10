@@ -289,6 +289,27 @@ func TestValidRedirectURI(t *testing.T) {
 			redirectURI: "http://localhost.localhost:8080/",
 			wantValid:   false,
 		},
+		{
+			client: Client{
+				Public: true,
+			},
+			redirectURI: "http://example.com/",
+			wantValid:   false,
+		},
+		{
+			client: Client{
+				Public: true,
+			},
+			redirectURI: "http://localhost:1234:8080/",
+			wantValid:   false,
+		},
+		{
+			client: Client{
+				Public: true,
+			},
+			redirectURI: "http://localhost#@example.com/",
+			wantValid:   false,
+		},
 	}
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("Case %d", i), func(t *testing.T) {
